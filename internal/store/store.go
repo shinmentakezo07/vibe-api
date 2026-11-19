@@ -9,16 +9,28 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"vibe-api/internal/keys"
 	"vibe-api/internal/usage"
 )
 
-const apiKeySetting = "mistral_api_key"
+const (
+	apiKeySetting     = "mistral_api_key"
+	roundRobinSetting = "round_robin"
+)
 
 const schema = `
 CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id         BIGSERIAL PRIMARY KEY,
+    label      TEXT NOT NULL DEFAULT '',
+    secret     TEXT NOT NULL,
+    enabled    BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS usage_records (
@@ -78,39 +90,144 @@ func (p *Postgres) Close() {
 	p.pool.Close()
 }
 
-// LoadAPIKey returns the stored provider key, or "" when none exists.
-func (p *Postgres) LoadAPIKey(ctx context.Context) (string, error) {
-	var value string
-	err := p.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key = $1`, apiKeySetting).Scan(&value)
-	if err == pgx.ErrNoRows {
-		return "", nil
-	}
+// ListAPIKeys returns every stored credential, decrypting secrets in memory.
+// A credential saved by the previous single-key schema is migrated on first use.
+func (p *Postgres) ListAPIKeys(ctx context.Context) ([]keys.Key, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT id, label, secret, enabled, created_at
+		FROM api_keys ORDER BY id
+	`)
 	if err != nil {
-		return "", fmt.Errorf("load API key: %w", err)
+		return nil, fmt.Errorf("list API keys: %w", err)
 	}
-	return p.codec.open(value)
+	result := make([]keys.Key, 0)
+	for rows.Next() {
+		var (
+			id     int64
+			stored string
+			key    keys.Key
+		)
+		if err := rows.Scan(&id, &key.Label, &stored, &key.Enabled, &key.CreatedAt); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan API key: %w", err)
+		}
+		secret, err := p.codec.open(stored)
+		if err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("read API key %d: %w", id, err)
+		}
+		key.ID = fmt.Sprintf("%d", id)
+		key.Secret = secret
+		key.Source = "database"
+		result = append(result, key)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read API keys: %w", err)
+	}
+	if len(result) > 0 {
+		return result, nil
+	}
+	return p.migrateLegacyKey(ctx)
 }
 
-// SaveAPIKey stores the provider key, encrypted when APP_SECRET is set.
-func (p *Postgres) SaveAPIKey(ctx context.Context, key string) error {
-	value, err := p.codec.seal(key)
-	if err != nil {
-		return fmt.Errorf("encrypt API key: %w", err)
+// migrateLegacyKey imports the single key used before the multi-key schema.
+func (p *Postgres) migrateLegacyKey(ctx context.Context) ([]keys.Key, error) {
+	var stored string
+	err := p.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key = $1`, apiKeySetting).Scan(&stored)
+	if err == pgx.ErrNoRows {
+		return []keys.Key{}, nil
 	}
-	_, err = p.pool.Exec(ctx, `
-		INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, now())
-		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
-	`, apiKeySetting, value)
 	if err != nil {
-		return fmt.Errorf("save API key: %w", err)
+		return nil, fmt.Errorf("load legacy API key: %w", err)
+	}
+	secret, err := p.codec.open(stored)
+	if err != nil {
+		return nil, fmt.Errorf("read legacy API key: %w", err)
+	}
+	key, err := p.AddAPIKey(ctx, "Imported", secret)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.pool.Exec(ctx, `DELETE FROM settings WHERE key = $1`, apiKeySetting); err != nil {
+		return nil, fmt.Errorf("remove legacy API key: %w", err)
+	}
+	return []keys.Key{key}, nil
+}
+
+// AddAPIKey stores a credential and returns it with its database id.
+func (p *Postgres) AddAPIKey(ctx context.Context, label, secret string) (keys.Key, error) {
+	stored, err := p.codec.seal(secret)
+	if err != nil {
+		return keys.Key{}, fmt.Errorf("encrypt API key: %w", err)
+	}
+	var (
+		id    int64
+		key   keys.Key
+		value string
+	)
+	err = p.pool.QueryRow(ctx, `
+		INSERT INTO api_keys (label, secret) VALUES ($1, $2)
+		RETURNING id, label, secret, enabled, created_at
+	`, label, stored).Scan(&id, &key.Label, &value, &key.Enabled, &key.CreatedAt)
+	if err != nil {
+		return keys.Key{}, fmt.Errorf("save API key: %w", err)
+	}
+	key.ID = fmt.Sprintf("%d", id)
+	key.Secret = secret
+	key.Source = "database"
+	return key, nil
+}
+
+// UpdateAPIKey changes the label and enabled state of a stored credential.
+func (p *Postgres) UpdateAPIKey(ctx context.Context, id, label string, enabled bool) error {
+	tag, err := p.pool.Exec(ctx, `UPDATE api_keys SET label = $2, enabled = $3 WHERE id = $1`, id, label, enabled)
+	if err != nil {
+		return fmt.Errorf("update API key: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
 	}
 	return nil
 }
 
-// ClearAPIKey removes the stored provider key.
-func (p *Postgres) ClearAPIKey(ctx context.Context) error {
-	if _, err := p.pool.Exec(ctx, `DELETE FROM settings WHERE key = $1`, apiKeySetting); err != nil {
-		return fmt.Errorf("clear API key: %w", err)
+// DeleteAPIKey removes a stored credential.
+func (p *Postgres) DeleteAPIKey(ctx context.Context, id string) error {
+	tag, err := p.pool.Exec(ctx, `DELETE FROM api_keys WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("delete API key: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
+// LoadRoundRobin reads the persisted rotation setting.
+func (p *Postgres) LoadRoundRobin(ctx context.Context) (bool, error) {
+	var value string
+	err := p.pool.QueryRow(ctx, `SELECT value FROM settings WHERE key = $1`, roundRobinSetting).Scan(&value)
+	if err == pgx.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load round-robin setting: %w", err)
+	}
+	return value == "true", nil
+}
+
+// SaveRoundRobin persists the rotation setting.
+func (p *Postgres) SaveRoundRobin(ctx context.Context, enabled bool) error {
+	value := "false"
+	if enabled {
+		value = "true"
+	}
+	_, err := p.pool.Exec(ctx, `
+		INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, now())
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+	`, roundRobinSetting, value)
+	if err != nil {
+		return fmt.Errorf("save round-robin setting: %w", err)
 	}
 	return nil
 }

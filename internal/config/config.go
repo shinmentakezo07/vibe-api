@@ -8,8 +8,7 @@ import (
 
 // Config is the proxy's complete runtime configuration.
 type Config struct {
-	// APIKey authenticates every request to the upstream Mistral API. It may be
-	// empty at startup and set later from the web UI.
+	// APIKey is an optional bootstrap credential added to the key pool.
 	APIKey string
 	// BaseURL is the upstream API origin, without a trailing slash.
 	BaseURL string

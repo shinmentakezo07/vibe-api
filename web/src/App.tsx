@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ArrowDownToLine,
@@ -17,18 +17,24 @@ import {
 import { toast } from "sonner"
 
 import { api, compactNumber, formatNumber } from "@/lib/api"
-import { KeyDialog } from "@/components/key-dialog"
+import { KeysPage } from "@/components/keys-page"
 import { ModelsPanel } from "@/components/models-panel"
 import { RecentRequests } from "@/components/recent-requests"
 import { StatCard } from "@/components/stat-card"
 import { UsagePanel } from "@/components/usage-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { cn } from "cn"
+
+type View = "dashboard" | "keys"
+
+function currentView(): View {
+  return window.location.hash === "#keys" ? "keys" : "dashboard"
+}
 
 function App() {
   const queryClient = useQueryClient()
-  const [keyOpen, setKeyOpen] = useState(false)
-  const prompted = useRef(false)
+  const [view, setView] = useState<View>(currentView)
 
   const status = useQuery({
     queryKey: ["status"],
@@ -51,11 +57,15 @@ function App() {
   })
 
   useEffect(() => {
-    if (status.data && !status.data.keyConfigured && !prompted.current) {
-      prompted.current = true
-      setKeyOpen(true)
-    }
-  }, [status.data])
+    const sync = () => setView(currentView())
+    window.addEventListener("hashchange", sync)
+    return () => window.removeEventListener("hashchange", sync)
+  }, [])
+
+  const navigate = (next: View) => {
+    window.location.hash = next === "keys" ? "keys" : ""
+    setView(next)
+  }
 
   const refreshing = status.isFetching || usage.isFetching || models.isFetching
   const totals = usage.data?.totals
@@ -84,6 +94,24 @@ function App() {
             </div>
           </div>
 
+          <nav className="hidden items-center gap-1 rounded-lg border border-border/60 bg-background/30 p-1 md:flex">
+            {(["dashboard", "keys"] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => navigate(item)}
+                className={cn(
+                  "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                  view === item
+                    ? "bg-secondary text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {item === "dashboard" ? "Overview" : "API keys"}
+              </button>
+            ))}
+          </nav>
+
           <div className="flex items-center gap-2">
             {status.data?.storage === "postgres" ? (
               <Badge
@@ -111,20 +139,30 @@ function App() {
             <Button
               variant="outline"
               size="sm"
+              aria-label="Refresh dashboard"
               className="h-8 border-border/70 bg-background/30"
               onClick={() => void refresh()}
             >
               <RefreshCw className={refreshing ? "animate-spin" : undefined} />
               <span className="hidden sm:inline">Refresh</span>
             </Button>
-            <Button size="sm" className="h-8 shadow-lg shadow-primary/25" onClick={() => setKeyOpen(true)}>
+            <Button
+              size="sm"
+              aria-label="API keys"
+              className="h-8 shadow-lg shadow-primary/25"
+              onClick={() => navigate("keys")}
+            >
               <KeyRound />
-              API key
+              <span className="hidden sm:inline">API keys</span>
             </Button>
           </div>
         </header>
 
         <main className="flex-1 space-y-5">
+          {view === "keys" ? (
+            <KeysPage onBack={() => navigate("dashboard")} />
+          ) : (
+            <>
           <section className="animate-rise flex flex-col justify-between gap-5 pt-2 pb-1 lg:flex-row lg:items-end">
             <div className="max-w-3xl">
               <div className="inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-[10px] font-medium tracking-[0.18em] text-primary uppercase">
@@ -169,7 +207,7 @@ function App() {
 
           {status.data && !status.data.keyConfigured ? (
             <button
-              onClick={() => setKeyOpen(true)}
+              onClick={() => navigate("keys")}
               className="group flex w-full items-center gap-3 rounded-2xl border border-amber-400/25 bg-amber-400/[0.07] px-4 py-3 text-left transition-colors hover:bg-amber-400/10"
             >
               <span className="flex size-9 items-center justify-center rounded-xl bg-amber-400/15 text-amber-300 ring-1 ring-amber-400/25">
@@ -230,6 +268,8 @@ function App() {
           <ModelsPanel enabled={status.data?.keyConfigured === true} />
 
           <RecentRequests snapshot={usage.data} />
+            </>
+          )}
         </main>
 
         <footer className="mt-8 flex flex-col items-center justify-between gap-3 border-t border-border/50 pt-5 text-[11px] text-muted-foreground sm:flex-row">
@@ -250,7 +290,6 @@ function App() {
         </footer>
       </div>
 
-      <KeyDialog open={keyOpen} onOpenChange={setKeyOpen} status={status.data} />
     </div>
   )
 }

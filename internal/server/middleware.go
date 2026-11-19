@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"vibe-api/internal/mistral"
 	"vibe-api/internal/openai"
 )
 
@@ -20,12 +21,23 @@ func (s *Server) requireKey(c *gin.Context) {
 	c.Next()
 }
 
+// requireAPIKey selects a healthy upstream credential for this request.
+func (s *Server) requireAPIKey(c *gin.Context) {
+	key, err := s.keys.Pick()
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusUnauthorized, openai.NewError("Mistral API key is not configured", "authentication_error"))
+		return
+	}
+	c.Request = c.Request.WithContext(mistral.WithAPIKey(c.Request.Context(), key))
+	c.Next()
+}
+
 // cors allows browser-based OpenAI clients to call the proxy directly.
 func cors() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
 			return

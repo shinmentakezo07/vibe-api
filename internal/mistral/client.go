@@ -10,28 +10,24 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 )
 
 // ErrMissingKey means no upstream credential is configured.
 var ErrMissingKey = errors.New("Mistral API key is not configured")
 
-// Client sends authenticated requests to one Mistral API origin. The key can
-// be replaced at runtime from the web UI.
+// Client sends requests to one Mistral API origin. The credential is selected
+// per request from the key pool and attached to the request context.
 type Client struct {
 	baseURL   string
 	userAgent string
 	http      *http.Client
-
-	mu     sync.RWMutex
-	apiKey string
 }
 
 // New builds a client with connection reuse and streaming-friendly timeouts.
 // There is no overall request timeout: a completion may stream for minutes,
 // and cancellation travels through the request context.
-func New(apiKey, baseURL, userAgent string) *Client {
+func New(baseURL, userAgent string) *Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = 100
 	transport.MaxIdleConnsPerHost = 20
@@ -40,7 +36,6 @@ func New(apiKey, baseURL, userAgent string) *Client {
 
 	return &Client{
 		baseURL:   baseURL,
-		apiKey:    apiKey,
 		userAgent: userAgent,
 		http:      &http.Client{Transport: transport},
 	}
@@ -75,33 +70,6 @@ func (c *Client) get(ctx context.Context, path string, inbound http.Header) (*ht
 		"Accept":          "application/json",
 		"Accept-Encoding": "identity",
 	})
-}
-
-// SetAPIKey replaces the upstream credential for subsequent requests.
-func (c *Client) SetAPIKey(key string) {
-	c.mu.Lock()
-	c.apiKey = strings.TrimSpace(key)
-	c.mu.Unlock()
-}
-
-// HasAPIKey reports whether an upstream credential is configured.
-func (c *Client) HasAPIKey() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.apiKey != ""
-}
-
-// KeyHint returns a masked form of the configured key for display.
-func (c *Client) KeyHint() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.apiKey == "" {
-		return ""
-	}
-	if len(c.apiKey) <= 4 {
-		return "••••"
-	}
-	return "••••" + c.apiKey[len(c.apiKey)-4:]
 }
 
 // ValidateKey checks a candidate key with a models request before it is saved.
@@ -144,9 +112,7 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, in
 		req.Header.Set("User-Agent", c.userAgent)
 	}
 
-	c.mu.RLock()
-	key := c.apiKey
-	c.mu.RUnlock()
+	key := apiKeyFromContext(ctx)
 	if key == "" {
 		return nil, ErrMissingKey
 	}

@@ -8,7 +8,7 @@ A Go proxy that exposes OpenAI-compatible (and Anthropic Messages) endpoints bac
 - **Anthropic compatibility** — `POST /v1/messages`, translating Anthropic content blocks, tool use, thinking effort, and system prompts into Mistral messages, and rewriting responses back (streaming included as Anthropic SSE events).
 - **Streaming** — SSE relayed line-by-line; Mistral chunks are rewritten into OpenAI or Anthropic shape on the fly.
 - **Tool calling** — normalizes tool definitions and tool calls, and maps legacy OpenAI `functions`/`function_call` onto the modern `tools`/`tool_calls` surface.
-- **Web dashboard** — React + Tailwind + shadcn/ui control plane for runtime API-key setup, live model discovery, and token usage.
+- **Web dashboard** — React + Tailwind + shadcn/ui control plane for API-key pools, round-robin rotation, live model discovery, and token usage.
 - **Optional auth** — set `PROXY_API_KEY` to require a matching bearer token on all `/v1` and `/api` routes.
 - **CORS** — browser-based clients can call the proxy directly.
 - **Debug logging** — `DEBUG=1` logs request bodies, headers, and upstream error payloads.
@@ -37,14 +37,17 @@ npm --prefix web run dev    # terminal 2 → http://localhost:5173
 
 ### Web dashboard
 
-- **API key** — validated against Mistral before being stored in memory; swapped in immediately, no restart. `Clear` removes it. The key is never returned by the API, only a masked hint.
+- **API keys** — a dedicated page at `/#keys` adds, enables, disables, and deletes multiple Mistral keys. New keys are validated before joining the pool. Optional round-robin rotates each request across enabled keys; when disabled, the first enabled key is used. Secrets are never returned, only masked hints.
 - **Models** — fetched from `GET /v1/models` with search and capability filters.
 - **Usage** — the proxy records prompt/completion tokens for OpenAI and Anthropic requests, streaming included. The dashboard polls `/api/usage` every 3 seconds and renders per-model and per-minute token flow plus recent requests.
-- **Admin API** — `GET /api/status`, `POST /api/key` (`{"apiKey":"..."}`), `DELETE /api/key`, `GET /api/usage`.
+- **Admin API** — `GET /api/status`, `GET /api/keys`, `POST /api/keys`
+  (`{"label":"...","apiKey":"..."}`), `PATCH /api/keys/:id`
+  (`{"enabled":false,"label":"..."}`), `DELETE /api/keys/:id`,
+  `PUT /api/keys/round-robin` (`{"enabled":true}`), and `GET /api/usage`.
 
-Without `DATABASE_URL`, usage and the runtime key are in-memory and reset when
-the proxy restarts. With PostgreSQL configured, the key and every completion
-record are persisted.
+Without `DATABASE_URL`, keys and usage are in-memory and reset when the proxy
+restarts. With PostgreSQL configured, the key pool, round-robin setting, and
+every completion record are persisted.
 When `PROXY_API_KEY` is set, the dashboard's `/api` calls require that bearer
 token; serve the dashboard over HTTPS or a trusted reverse proxy before
 sending real keys over a network.
@@ -66,7 +69,7 @@ docker compose up --build
 ```
 
 Open `http://localhost:8080`; `/healthz` is the health check. The API waits for
-Postgres to become healthy, and `APP_SECRET` encrypts the stored key. Stop with
+Postgres to become healthy, and `APP_SECRET` encrypts stored keys. Stop with
 `docker compose down` (data kept) or `docker compose down -v` (data deleted).
 
 Set `APP_PORT` in `.env` to change the published port. `POSTGRES_PASSWORD`
@@ -92,25 +95,25 @@ Without `DATABASE_URL` the image keeps the key and usage in memory.
 | `MISTRAL_API_KEY` | Your Mistral key (recommended; survives restarts) |
 | `PROXY_API_KEY` | Optional bearer token for `/v1` and `/api` |
 | `DATABASE_URL` | Optional PostgreSQL DSN; enables durable key and usage |
-| `APP_SECRET` | Optional AES-256-GCM secret for the stored key |
+| `APP_SECRET` | Optional AES-256-GCM secret for stored keys |
 | `ANTHROPIC_MODEL` | Optional Claude-model substitute, default `mistral-large-4-0` |
 
 Railway injects `PORT`; the server binds to it automatically (see
 `internal/config/config.go`). Do not set `LISTEN_ADDR` unless you need to
 override it. `railway.toml` points the health check at `/healthz`.
 
-If `MISTRAL_API_KEY` is not set, add the key from the dashboard. Without a
-database it lives in the instance's memory, so it is lost on redeploy/restart —
-set the variable for durable deployments. With `PROXY_API_KEY` enabled, protect
-the admin routes at your reverse proxy, since the dashboard does not send that
-token.
+If `MISTRAL_API_KEY` is not set, add keys from the **API keys** page. With a
+database they survive redeploys; without it, runtime keys live in memory. An
+environment key appears as the `Environment` entry and is restored from the
+variable on restart. With `PROXY_API_KEY` enabled, protect the admin routes at
+your reverse proxy, since the dashboard does not send that token.
 
 ### PostgreSQL persistence
 
 Add a PostgreSQL database to the Railway project, then expose its connection
 string to the API service as `DATABASE_URL` (for example
 `${{Postgres.DATABASE_URL}}`). The server connects at startup, creates the
-schema, and loads the stored key before listening.
+schema, and loads the key pool before listening.
 
 The included `compose.yaml` already wires `DATABASE_URL` to its Postgres
 service. To use an external database:
@@ -124,14 +127,16 @@ docker run --rm -p 8080:8080 \
 
 Tables created automatically:
 
-- `settings` — one row holding the Mistral key.
+- `api_keys` — labels, encrypted secrets, enabled state, timestamps.
+- `settings` — round-robin state and the legacy single-key migration slot.
 - `usage_records` — one row per billed completion, indexed by `created_at`.
 
-Set `APP_SECRET` to encrypt the stored key with AES-256-GCM. Without it the key
-is stored as plaintext and a startup warning is logged; changing the secret
-later makes an existing encrypted key unreadable. `MISTRAL_API_KEY` takes
-precedence over the database value at startup. Dashboard writes update both the
-running client and Postgres; the dashboard exposes whether storage is
+A key saved by the old single-key schema is imported as `Imported` on first
+start. Set `APP_SECRET` to encrypt stored keys with AES-256-GCM. Without it keys
+are stored as plaintext and a startup warning is logged; changing the secret
+later makes existing encrypted keys unreadable. A unique `MISTRAL_API_KEY` from
+the environment joins the pool as a runtime-only `Environment` key. Dashboard
+writes update the pool and Postgres; the dashboard exposes whether storage is
 `postgres` or `memory`.
 
 ### Example
@@ -226,6 +231,7 @@ All settings come from environment variables (see `internal/config/config.go`).
 │   │   ├── ui.go              #   dashboard static serving / SPA fallback
 │   │   ├── stream.go          #   SSE relay + chunk rewriting
 │   │   └── middleware.go      #   auth, CORS, request logging
+│   ├── keys/                  # key pool, enablement, and round-robin selection
 │   ├── store/                 # PostgreSQL key + usage persistence and migrations
 │   ├── usage/                 # token accounting types and in-memory fallback
 │   └── translator/            # request/response/stream translation
@@ -238,7 +244,7 @@ All settings come from environment variables (see `internal/config/config.go`).
 │       └── anthropic_test.go  #   Anthropic translation and stream tests
 └── web/                       # React + Vite + Tailwind + shadcn/ui dashboard
     ├── src/components/ui/     # shadcn component sources
-    ├── src/components/        # dashboard panels (models, usage, key dialog)
+    ├── src/components/        # dashboard panels (models, usage, keys page)
     └── src/lib/api.ts         # typed client for proxy + admin endpoints
 ```
 

@@ -2,8 +2,26 @@ export type Status = {
   keyConfigured: boolean
   keyHint: string
   anthropicModel: string
+  keyCount: number
+  enabledKeys: number
+  roundRobin: boolean
   proxyAuth: boolean
   upstream: string
+  storage: "postgres" | "memory"
+}
+
+export type APIKey = {
+  id: string
+  label: string
+  hint: string
+  enabled: boolean
+  createdAt: string
+  source: "database" | "environment" | "memory"
+}
+
+export type KeyList = {
+  keys: APIKey[]
+  roundRobin: boolean
   storage: "postgres" | "memory"
 }
 
@@ -79,12 +97,24 @@ export const api = {
   status: () => request<Status>("/api/status"),
   usage: () => request<UsageSnapshot>("/api/usage"),
   models: () => request<ModelList>("/v1/models"),
-  saveKey: (apiKey: string) =>
-    request<Status>("/api/key", {
+  keys: () => request<KeyList>("/api/keys"),
+  addKey: (label: string, apiKey: string) =>
+    request<KeyList>("/api/keys", {
       method: "POST",
-      body: JSON.stringify({ apiKey }),
+      body: JSON.stringify({ label, apiKey }),
     }),
-  clearKey: () => request<Status>("/api/key", { method: "DELETE" }),
+  updateKey: (id: string, patch: Partial<Pick<APIKey, "label" | "enabled">>) =>
+    request<KeyList>(`/api/keys/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+  deleteKey: (id: string) =>
+    request<KeyList>(`/api/keys/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  setRoundRobin: (enabled: boolean) =>
+    request<KeyList>("/api/keys/round-robin", {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    }),
 }
 
 export function compactNumber(value: number): string {

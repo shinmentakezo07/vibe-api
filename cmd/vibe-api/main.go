@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"vibe-api/internal/config"
+	"vibe-api/internal/keys"
 	"vibe-api/internal/mistral"
 	"vibe-api/internal/server"
 	"vibe-api/internal/store"
@@ -26,9 +27,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	upstream := mistral.New(cfg.APIKey, cfg.BaseURL, cfg.UserAgent)
+	upstream := mistral.New(cfg.BaseURL, cfg.UserAgent)
 
-	var db *store.Postgres
+	var (
+		db         *store.Postgres
+		initial    []keys.Key
+		roundRobin bool
+	)
 	if cfg.DatabaseURL != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		db, err = store.Open(ctx, cfg.DatabaseURL, cfg.AppSecret, log)
@@ -39,25 +44,46 @@ func main() {
 		}
 		defer db.Close()
 		log.Info("postgres connected")
-		if cfg.APIKey == "" {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			key, err := db.LoadAPIKey(ctx)
-			cancel()
-			if err != nil {
-				log.Error("load stored API key", "error", err)
-				os.Exit(1)
+
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		initial, err = db.ListAPIKeys(ctx)
+		if err == nil {
+			roundRobin, err = db.LoadRoundRobin(ctx)
+		}
+		cancel()
+		if err != nil {
+			log.Error("load API keys", "error", err)
+			os.Exit(1)
+		}
+		log.Info("loaded API keys", "count", len(initial))
+	}
+
+	if cfg.APIKey != "" {
+		present := false
+		for _, key := range initial {
+			if key.Secret == cfg.APIKey {
+				present = true
+				break
 			}
-			if key != "" {
-				upstream.SetAPIKey(key)
-				log.Info("loaded API key from postgres")
-			}
+		}
+		if !present {
+			initial = append(initial, keys.Key{
+				ID:        "env",
+				Label:     "Environment",
+				Secret:    cfg.APIKey,
+				Enabled:   true,
+				CreatedAt: time.Now(),
+				Source:    "environment",
+			})
+			log.Info("environment API key added to the pool")
 		}
 	}
 
-	if !upstream.HasAPIKey() {
-		log.Warn("no upstream API key configured; add one from the dashboard")
+	keyring := keys.New(initial, roundRobin)
+	if keyring.EnabledCount() == 0 {
+		log.Warn("no enabled API key configured; add one from the dashboard")
 	}
-	handler := server.New(cfg, upstream, db, log).Router()
+	handler := server.New(cfg, upstream, db, keyring, log).Router()
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
