@@ -1,0 +1,10 @@
+.git
+.gitignore
+vibe-api
+*.exe
+.env
+README.md
+web/node_modules
+web/dist
+web/.gitignore
+web/*.log

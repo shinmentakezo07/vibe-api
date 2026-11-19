@@ -47,6 +47,40 @@ When `PROXY_API_KEY` is set, the dashboard's `/api` calls require that bearer
 token; serve the dashboard over HTTPS or a trusted reverse proxy before
 sending real keys over a network.
 
+## Docker and Railway
+
+The API, dashboard, and admin endpoints share one port. `Dockerfile` builds the
+Vite bundle and the Go binary in separate stages, then runs both from a small
+Alpine image as a non-root user.
+
+```sh
+docker build -t vibe-api .
+docker run --rm -p 8080:8080 -e MISTRAL_API_KEY=... vibe-api
+```
+
+Open `http://localhost:8080`; `/healthz` is the health check.
+
+### Railway
+
+1. Create a Railway project from this repository. Railway detects
+   `railway.toml` and builds the `Dockerfile`.
+2. Set variables:
+
+| Variable | Value |
+|---|---|
+| `MISTRAL_API_KEY` | Your Mistral key (recommended; survives restarts) |
+| `PROXY_API_KEY` | Optional bearer token for `/v1` and `/api` |
+| `ANTHROPIC_MODEL` | Optional Claude-model substitute, default `mistral-large-4-0` |
+
+Railway injects `PORT`; the server binds to it automatically (see
+`internal/config/config.go`). Do not set `LISTEN_ADDR` unless you need to
+override it. `railway.toml` points the health check at `/healthz`.
+
+If `MISTRAL_API_KEY` is not set, add the key from the dashboard. That key lives
+in the instance's memory, so it is lost on redeploy/restart — set the variable
+for durable deployments. With `PROXY_API_KEY` enabled, protect the admin routes
+at your reverse proxy, since the dashboard does not send that token.
+
 ### Example
 
 ```sh
@@ -110,7 +144,8 @@ All settings come from environment variables (see `internal/config/config.go`).
 | `MISTRAL_API_KEY` | unset (set from UI) | Upstream credential; can also be added at runtime |
 | `MISTRAL_BASE_URL` | `https://api.mistral.ai` | Upstream API origin |
 | `PROXY_API_KEY` | unset (auth disabled) | Required bearer token for inbound requests |
-| `LISTEN_ADDR` | `:8080` | HTTP bind address |
+| `LISTEN_ADDR` | `$PORT`, else `:8080` | HTTP bind address |
+| `PORT` | — | Platform-provided port, used when `LISTEN_ADDR` is unset |
 | `ANTHROPIC_MODEL` | `mistral-large-4-0` | Model substituted for Claude model names on the Anthropic route |
 | `UPSTREAM_USER_AGENT` | `Mistral-Vibe/3.1.3` | User-Agent sent upstream when the caller does not supply one |
 | `WEB_DIR` | `web/dist` | Built dashboard directory served at `/` |
@@ -119,6 +154,8 @@ All settings come from environment variables (see `internal/config/config.go`).
 ## Project layout
 
 ```
+├── Dockerfile                 # multi-stage dashboard + Go build, one runtime port
+├── railway.toml               # Railway Dockerfile build + /healthz check
 ├── cmd/vibe-api/main.go       # entry point: config, HTTP server, graceful shutdown
 ├── internal/
 │   ├── config/config.go       # environment-based configuration and validation
