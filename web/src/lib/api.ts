@@ -47,6 +47,7 @@ export type UsageTotals = {
   totalTokens: number
   cachedTokens: number
   reasoningTokens: number
+  latencyMs: number
 }
 
 export type UsageRecord = {

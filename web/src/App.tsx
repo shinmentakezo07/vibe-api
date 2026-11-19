@@ -5,6 +5,7 @@ import {
   Boxes,
   Database,
   ExternalLink,
+  Gauge,
   KeyRound,
   Layers3,
   RefreshCw,
@@ -62,6 +63,16 @@ function App() {
 
   const refreshing = status.isFetching || usage.isFetching
   const totals = usage.data?.totals
+  const avgTps =
+    totals && (totals.latencyMs ?? 0) > 0
+      ? totals.completionTokens / ((totals.latencyMs ?? 0) / 1000)
+      : 0
+  const avgTpsLabel =
+    totals && (totals.latencyMs ?? 0) > 0
+      ? avgTps >= 100
+        ? formatNumber(Math.round(avgTps))
+        : avgTps.toFixed(1)
+      : "—"
 
   const refresh = async () => {
     await queryClient.invalidateQueries()
@@ -243,7 +254,7 @@ function App() {
             </span>
           </div>
 
-          <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+          <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
             <StatCard
               label="Requests"
               value={totals ? formatNumber(totals.requests) : "—"}
@@ -263,7 +274,7 @@ function App() {
             />
             <StatCard
               label="Cached tokens"
-              value={totals ? compactNumber(totals.cachedTokens) : "—"}
+              value={totals ? compactNumber(totals.cachedTokens ?? 0) : "—"}
               detail="Served from cache"
               icon={ArrowDownToLine}
               tone="emerald"
@@ -271,12 +282,22 @@ function App() {
             />
             <StatCard
               label="Reasoning tokens"
-              value={totals ? compactNumber(totals.reasoningTokens) : "—"}
+              value={totals ? compactNumber(totals.reasoningTokens ?? 0) : "—"}
               detail="Reasoning model output"
               icon={Sparkles}
               tone="amber"
               delay={120}
             />
+            <div className="col-span-2 sm:col-span-1">
+              <StatCard
+                label="Avg TPS / request"
+                value={avgTpsLabel}
+                detail="Output tokens per wall-clock second"
+                icon={Gauge}
+                tone="violet"
+                delay={160}
+              />
+            </div>
           </section>
 
           <UsagePanel snapshot={usage.data} pending={usage.isPending} />

@@ -261,6 +261,7 @@ func (p *Postgres) Usage(ctx context.Context, limit int) (usage.Snapshot, error)
 		       COALESCE(sum(total_tokens), 0),
 		       COALESCE(sum(cached_input_tokens), 0),
 		       COALESCE(sum(reasoning_tokens), 0),
+		       COALESCE(sum(latency_ms), 0),
 		       COALESCE(min(created_at), now())
 		FROM usage_records
 	`).Scan(
@@ -270,6 +271,7 @@ func (p *Postgres) Usage(ctx context.Context, limit int) (usage.Snapshot, error)
 		&snapshot.Totals.Total,
 		&snapshot.Totals.Cached,
 		&snapshot.Totals.Reasoning,
+		&snapshot.Totals.LatencyMS,
 		&snapshot.Since,
 	)
 	if err != nil {

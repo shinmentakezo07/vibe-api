@@ -31,6 +31,7 @@ type Totals struct {
 	Total      int `json:"totalTokens"`
 	Cached     int `json:"cachedTokens"`
 	Reasoning  int `json:"reasoningTokens"`
+	LatencyMS  int `json:"latencyMs"`
 }
 
 // Sample is one completion observed by the proxy.
@@ -116,6 +117,7 @@ func (t *Tracker) Add(sample Sample) (Record, bool) {
 	t.totals.Total += sample.Total
 	t.totals.Cached += sample.Cached
 	t.totals.Reasoning += sample.Reasoning
+	t.totals.LatencyMS += sample.LatencyMS
 
 	modelTotals := t.byModel[sample.Model]
 	if modelTotals == nil {
@@ -128,6 +130,7 @@ func (t *Tracker) Add(sample Sample) (Record, bool) {
 	modelTotals.Total += sample.Total
 	modelTotals.Cached += sample.Cached
 	modelTotals.Reasoning += sample.Reasoning
+	modelTotals.LatencyMS += sample.LatencyMS
 
 	t.recent = append(t.recent, record)
 	if len(t.recent) > 200 {
@@ -175,13 +178,20 @@ func FromMessage(data []byte) (string, Tokens) {
 	var payload struct {
 		Model string `json:"model"`
 		Usage *struct {
-			PromptTokens        int `json:"prompt_tokens"`
-			CompletionTokens    int `json:"completion_tokens"`
-			TotalTokens         int `json:"total_tokens"`
-			PromptTokensCached  int `json:"prompt_tokens_cached"`
-			PromptTokensDetails *struct {
+			PromptTokens         int `json:"prompt_tokens"`
+			CompletionTokens     int `json:"completion_tokens"`
+			TotalTokens          int `json:"total_tokens"`
+			PromptTokensCached   int `json:"prompt_tokens_cached"`
+			CachedTokens         int `json:"cached_tokens"`
+			NumCachedTokens      int `json:"num_cached_tokens"`
+			CacheReadInputTokens int `json:"cache_read_input_tokens"`
+			PromptCacheHitTokens int `json:"prompt_cache_hit_tokens"`
+			PromptTokensDetails  *struct {
 				CachedTokens int `json:"cached_tokens"`
 			} `json:"prompt_tokens_details"`
+			InputTokensDetails *struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"input_tokens_details"`
 			CompletionTokensDetails *struct {
 				ReasoningTokens int `json:"reasoning_tokens"`
 			} `json:"completion_tokens_details"`
@@ -192,8 +202,20 @@ func FromMessage(data []byte) (string, Tokens) {
 	}
 	u := payload.Usage
 	cached := u.PromptTokensCached
+	for _, candidate := range []int{
+		u.CachedTokens,
+		u.NumCachedTokens,
+		u.CacheReadInputTokens,
+		u.PromptCacheHitTokens,
+	} {
+		if candidate > cached {
+			cached = candidate
+		}
+	}
 	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > 0 {
 		cached = u.PromptTokensDetails.CachedTokens
+	} else if u.InputTokensDetails != nil && u.InputTokensDetails.CachedTokens > 0 {
+		cached = u.InputTokensDetails.CachedTokens
 	}
 	reasoning := 0
 	if u.CompletionTokensDetails != nil {

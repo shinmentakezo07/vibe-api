@@ -11,6 +11,10 @@ func TestFromMessage(t *testing.T) {
 	if openaiStyle.Cached != 4 {
 		t.Fatalf("openai cached tokens=%#v", openaiStyle)
 	}
+	_, alternate := FromMessage([]byte(`{"usage":{"prompt_tokens":9,"cached_tokens":5}}`))
+	if alternate.Cached != 5 {
+		t.Fatalf("alternate cached tokens=%#v", alternate)
+	}
 	if _, empty := FromMessage([]byte(`{"choices":[]}`)); empty.OK {
 		t.Fatal("reported usage without a usage block")
 	}

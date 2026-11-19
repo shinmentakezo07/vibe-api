@@ -13,10 +13,16 @@ import {
 } from "@/components/ui/table"
 
 function latency(ms: number) {
-  if (ms <= 0) return "—"
+  if (!Number.isFinite(ms) || ms <= 0) return "—"
   if (ms < 1000) return `${Math.round(ms)} ms`
   if (ms < 10_000) return `${(ms / 1000).toFixed(1)} s`
   return `${Math.round(ms / 1000)} s`
+}
+
+function requestTps(completionTokens: number, latencyMs: number) {
+  if (!Number.isFinite(latencyMs) || latencyMs <= 0) return "—"
+  const value = completionTokens / (latencyMs / 1000)
+  return value >= 100 ? formatNumber(Math.round(value)) : value.toFixed(1)
 }
 
 export function RequestLog({ snapshot }: { snapshot?: UsageSnapshot }) {
@@ -61,6 +67,7 @@ export function RequestLog({ snapshot }: { snapshot?: UsageSnapshot }) {
                   <TableHead className="text-right text-[10px] tracking-wider uppercase">Cached</TableHead>
                   <TableHead className="text-right text-[10px] tracking-wider uppercase">Reason</TableHead>
                   <TableHead className="text-right text-[10px] tracking-wider uppercase">Total</TableHead>
+                  <TableHead className="text-right text-[10px] tracking-wider uppercase">TPS</TableHead>
                   <TableHead className="text-right text-[10px] tracking-wider uppercase">Latency</TableHead>
                   <TableHead className="pr-5 text-right text-[10px] tracking-wider uppercase">When</TableHead>
                 </TableRow>
@@ -94,16 +101,19 @@ export function RequestLog({ snapshot }: { snapshot?: UsageSnapshot }) {
                       </span>
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                      {record.cachedInputTokens > 0 ? compactNumber(record.cachedInputTokens) : "—"}
+                      {(record.cachedInputTokens ?? 0) > 0 ? compactNumber(record.cachedInputTokens) : "—"}
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs text-muted-foreground">
-                      {record.reasoningTokens > 0 ? compactNumber(record.reasoningTokens) : "—"}
+                      {(record.reasoningTokens ?? 0) > 0 ? compactNumber(record.reasoningTokens) : "—"}
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs text-foreground/85">
                       {compactNumber(record.totalTokens)}
                     </TableCell>
+                    <TableCell className="text-right font-mono text-xs text-emerald-300">
+                      {requestTps(record.completionTokens, record.latencyMs ?? 0)}
+                    </TableCell>
                     <TableCell className="text-right font-mono text-xs text-foreground/75">
-                      {latency(record.latencyMs)}
+                      {latency(record.latencyMs ?? 0)}
                     </TableCell>
                     <TableCell className="pr-5 text-right text-[11px] whitespace-nowrap text-muted-foreground">
                       {timeAgo(record.time)}

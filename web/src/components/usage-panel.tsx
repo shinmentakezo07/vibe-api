@@ -134,8 +134,8 @@ export function UsagePanel({ snapshot, pending }: { snapshot?: UsageSnapshot; pe
     const total = records.reduce((sum, record) => sum + record.totalTokens, 0)
     const output = records.reduce((sum, record) => sum + record.completionTokens, 0)
     const prompt = records.reduce((sum, record) => sum + record.promptTokens, 0)
-    const cached = records.reduce((sum, record) => sum + record.cachedInputTokens, 0)
-    const reasoning = records.reduce((sum, record) => sum + record.reasoningTokens, 0)
+    const cached = records.reduce((sum, record) => sum + (record.cachedInputTokens ?? 0), 0)
+    const reasoning = records.reduce((sum, record) => sum + (record.reasoningTokens ?? 0), 0)
     return {
       tpm: total,
       tps: output / 60,
