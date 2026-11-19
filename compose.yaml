@@ -1,0 +1,34 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: vibe
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vibe}
+      POSTGRES_DB: vibe
+    volumes:
+      - vibe-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      PORT: "8080"
+      DATABASE_URL: ${DATABASE_URL:-postgres://vibe:${POSTGRES_PASSWORD:-vibe}@db:5432/vibe?sslmode=disable}
+      APP_SECRET: ${APP_SECRET:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      PROXY_API_KEY: ${PROXY_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-mistral-large-4-0}
+
+volumes:
+  vibe-db:

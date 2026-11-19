@@ -55,12 +55,31 @@ The API, dashboard, and admin endpoints share one port. `Dockerfile` builds the
 Vite bundle and the Go binary in separate stages, then runs both from a small
 Alpine image as a non-root user.
 
+### Docker Compose
+
+`compose.yaml` runs the proxy and PostgreSQL together. The database is exposed
+only to the API container and its data lives in the `vibe-db` volume.
+
+```sh
+cp .env.example .env   # set APP_SECRET and optionally MISTRAL_API_KEY
+docker compose up --build
+```
+
+Open `http://localhost:8080`; `/healthz` is the health check. The API waits for
+Postgres to become healthy, and `APP_SECRET` encrypts the stored key. Stop with
+`docker compose down` (data kept) or `docker compose down -v` (data deleted).
+
+Set `APP_PORT` in `.env` to change the published port. `POSTGRES_PASSWORD`
+defaults to `vibe` for local use; override it for anything shared.
+
+### Image only
+
 ```sh
 docker build -t vibe-api .
 docker run --rm -p 8080:8080 -e MISTRAL_API_KEY=... vibe-api
 ```
 
-Open `http://localhost:8080`; `/healthz` is the health check.
+Without `DATABASE_URL` the image keeps the key and usage in memory.
 
 ### Railway
 
@@ -92,6 +111,9 @@ Add a PostgreSQL database to the Railway project, then expose its connection
 string to the API service as `DATABASE_URL` (for example
 `${{Postgres.DATABASE_URL}}`). The server connects at startup, creates the
 schema, and loads the stored key before listening.
+
+The included `compose.yaml` already wires `DATABASE_URL` to its Postgres
+service. To use an external database:
 
 ```sh
 docker run --rm -p 8080:8080 \
@@ -188,6 +210,8 @@ All settings come from environment variables (see `internal/config/config.go`).
 
 ```
 ├── Dockerfile                 # multi-stage dashboard + Go build, one runtime port
+├── compose.yaml               # API + PostgreSQL with a persistent volume
+├── .env.example               # local Compose configuration template
 ├── railway.toml               # Railway Dockerfile build + /healthz check
 ├── cmd/vibe-api/main.go       # entry point: config, HTTP server, graceful shutdown
 ├── internal/
