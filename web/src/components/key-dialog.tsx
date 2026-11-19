@@ -69,8 +69,9 @@ export function KeyDialog({ open, onOpenChange, status }: Props) {
           </div>
           <DialogTitle className="text-lg">Mistral API key</DialogTitle>
           <DialogDescription>
-            The key is checked against Mistral, then used immediately by the
-            proxy. No restart required.
+            {status?.storage === "postgres"
+              ? "The key is checked against Mistral, encrypted when APP_SECRET is set, and stored in Postgres."
+              : "The key is checked against Mistral, then used immediately by the proxy. No restart required."}
           </DialogDescription>
         </DialogHeader>
 
@@ -135,7 +136,10 @@ export function KeyDialog({ open, onOpenChange, status }: Props) {
               >
                 Mistral console
               </a>
-              . The key stays in proxy memory; restarting the proxy clears it.
+              .{" "}
+              {status?.storage === "postgres"
+                ? "It survives restarts; set APP_SECRET to encrypt it at rest."
+                : "The key stays in proxy memory; restarting the proxy clears it."}
             </p>
           </div>
 

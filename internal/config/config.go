@@ -25,6 +25,10 @@ type Config struct {
 	UserAgent string
 	// Debug logs request bodies and upstream error payloads.
 	Debug bool
+	// DatabaseURL persists the provider key and usage in PostgreSQL when set.
+	DatabaseURL string
+	// AppSecret encrypts stored credentials; empty stores them as plaintext.
+	AppSecret string
 }
 
 // Load reads configuration from the environment and validates it.
@@ -35,6 +39,8 @@ type Config struct {
 //	LISTEN_ADDR      bind address (default $PORT, else :8080)
 //	PORT             platform-provided port (Railway)
 //	WEB_DIR          built dashboard directory (default web/dist)
+//	DATABASE_URL     optional PostgreSQL DSN for the key and usage history
+//	APP_SECRET       optional AES-256-GCM secret for stored credentials
 func Load() (Config, error) {
 	cfg := Config{
 		APIKey:         os.Getenv("MISTRAL_API_KEY"),
@@ -45,6 +51,8 @@ func Load() (Config, error) {
 		AnthropicModel: envOr("ANTHROPIC_MODEL", "mistral-large-4-0"),
 		UserAgent:      envOr("UPSTREAM_USER_AGENT", "Mistral-Vibe/3.1.3"),
 		Debug:          os.Getenv("DEBUG") == "1",
+		DatabaseURL:    os.Getenv("DATABASE_URL"),
+		AppSecret:      os.Getenv("APP_SECRET"),
 	}
 	return cfg, nil
 }

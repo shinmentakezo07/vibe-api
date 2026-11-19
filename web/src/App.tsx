@@ -4,6 +4,7 @@ import {
   ArrowDownToLine,
   ArrowUpFromLine,
   Boxes,
+  Database,
   ExternalLink,
   KeyRound,
   Layers3,
@@ -84,6 +85,16 @@ function App() {
           </div>
 
           <div className="flex items-center gap-2">
+            {status.data?.storage === "postgres" ? (
+              <Badge
+                variant="outline"
+                className="hidden h-8 gap-1.5 border-border/70 bg-background/30 px-2.5 font-normal text-[11px] text-muted-foreground sm:inline-flex"
+                title="Key and usage history persisted in PostgreSQL"
+              >
+                <Database className="size-3 text-emerald-400" />
+                Postgres
+              </Badge>
+            ) : null}
             <Badge
               variant="outline"
               className="hidden h-8 gap-1.5 border-border/70 bg-background/30 px-2.5 font-normal text-[11px] text-muted-foreground sm:inline-flex"
@@ -180,7 +191,9 @@ function App() {
             <StatCard
               label="Requests"
               value={totals ? formatNumber(totals.requests) : "—"}
-              detail="Since proxy start"
+              detail={
+                status.data?.storage === "postgres" ? "Persisted across restarts" : "Since proxy start"
+              }
               icon={Layers3}
               tone="violet"
             />
@@ -221,7 +234,10 @@ function App() {
 
         <footer className="mt-8 flex flex-col items-center justify-between gap-3 border-t border-border/50 pt-5 text-[11px] text-muted-foreground sm:flex-row">
           <p>
-            Vibe API · OpenAI and Anthropic wire formats · usage is in-memory and resets on restart
+            Vibe API · OpenAI and Anthropic wire formats ·{" "}
+            {status.data?.storage === "postgres"
+              ? "key and usage persisted in Postgres"
+              : "usage is in-memory and resets on restart"}
           </p>
           <div className="flex items-center gap-4">
             <a className="inline-flex items-center gap-1 hover:text-foreground" href="/healthz" target="_blank" rel="noreferrer">

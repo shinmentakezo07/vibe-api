@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -139,7 +140,15 @@ func (s *Server) track(route, model string, data []byte, stream bool) {
 	if reported != "" {
 		model = reported
 	}
-	s.tracker.Add(route, model, tokens.Prompt, tokens.Completion, tokens.Total, tokens.Cached, stream)
+	record, ok := s.tracker.Add(route, model, tokens.Prompt, tokens.Completion, tokens.Total, tokens.Cached, stream)
+	if !ok || s.db == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := s.db.AddUsage(ctx, record); err != nil {
+		s.log.Error("persist usage", "error", err)
+	}
 }
 
 // upstreamError reports a failed upstream call, except when the caller is gone.

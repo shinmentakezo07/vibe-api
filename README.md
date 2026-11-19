@@ -42,7 +42,9 @@ npm --prefix web run dev    # terminal 2 → http://localhost:5173
 - **Usage** — the proxy records prompt/completion tokens for OpenAI and Anthropic requests, streaming included. The dashboard polls `/api/usage` every 3 seconds and renders per-model and per-minute token flow plus recent requests.
 - **Admin API** — `GET /api/status`, `POST /api/key` (`{"apiKey":"..."}`), `DELETE /api/key`, `GET /api/usage`.
 
-Usage and the runtime key are in-memory and reset when the proxy restarts.
+Without `DATABASE_URL`, usage and the runtime key are in-memory and reset when
+the proxy restarts. With PostgreSQL configured, the key and every completion
+record are persisted.
 When `PROXY_API_KEY` is set, the dashboard's `/api` calls require that bearer
 token; serve the dashboard over HTTPS or a trusted reverse proxy before
 sending real keys over a network.
@@ -70,16 +72,45 @@ Open `http://localhost:8080`; `/healthz` is the health check.
 |---|---|
 | `MISTRAL_API_KEY` | Your Mistral key (recommended; survives restarts) |
 | `PROXY_API_KEY` | Optional bearer token for `/v1` and `/api` |
+| `DATABASE_URL` | Optional PostgreSQL DSN; enables durable key and usage |
+| `APP_SECRET` | Optional AES-256-GCM secret for the stored key |
 | `ANTHROPIC_MODEL` | Optional Claude-model substitute, default `mistral-large-4-0` |
 
 Railway injects `PORT`; the server binds to it automatically (see
 `internal/config/config.go`). Do not set `LISTEN_ADDR` unless you need to
 override it. `railway.toml` points the health check at `/healthz`.
 
-If `MISTRAL_API_KEY` is not set, add the key from the dashboard. That key lives
-in the instance's memory, so it is lost on redeploy/restart — set the variable
-for durable deployments. With `PROXY_API_KEY` enabled, protect the admin routes
-at your reverse proxy, since the dashboard does not send that token.
+If `MISTRAL_API_KEY` is not set, add the key from the dashboard. Without a
+database it lives in the instance's memory, so it is lost on redeploy/restart —
+set the variable for durable deployments. With `PROXY_API_KEY` enabled, protect
+the admin routes at your reverse proxy, since the dashboard does not send that
+token.
+
+### PostgreSQL persistence
+
+Add a PostgreSQL database to the Railway project, then expose its connection
+string to the API service as `DATABASE_URL` (for example
+`${{Postgres.DATABASE_URL}}`). The server connects at startup, creates the
+schema, and loads the stored key before listening.
+
+```sh
+docker run --rm -p 8080:8080 \
+  -e DATABASE_URL=postgres://vibe:vibe@host.docker.internal:5432/vibe \
+  -e APP_SECRET=change-me \
+  -e MISTRAL_API_KEY=... vibe-api
+```
+
+Tables created automatically:
+
+- `settings` — one row holding the Mistral key.
+- `usage_records` — one row per billed completion, indexed by `created_at`.
+
+Set `APP_SECRET` to encrypt the stored key with AES-256-GCM. Without it the key
+is stored as plaintext and a startup warning is logged; changing the secret
+later makes an existing encrypted key unreadable. `MISTRAL_API_KEY` takes
+precedence over the database value at startup. Dashboard writes update both the
+running client and Postgres; the dashboard exposes whether storage is
+`postgres` or `memory`.
 
 ### Example
 
@@ -150,6 +181,8 @@ All settings come from environment variables (see `internal/config/config.go`).
 | `UPSTREAM_USER_AGENT` | `Mistral-Vibe/3.1.3` | User-Agent sent upstream when the caller does not supply one |
 | `WEB_DIR` | `web/dist` | Built dashboard directory served at `/` |
 | `DEBUG` | unset | `1` logs request bodies/headers and upstream error payloads |
+| `DATABASE_URL` | unset (memory) | PostgreSQL DSN; enables durable key and usage storage |
+| `APP_SECRET` | unset | Encrypts the stored key with AES-256-GCM; required to read encrypted keys |
 
 ## Project layout
 
@@ -169,7 +202,8 @@ All settings come from environment variables (see `internal/config/config.go`).
 │   │   ├── ui.go              #   dashboard static serving / SPA fallback
 │   │   ├── stream.go          #   SSE relay + chunk rewriting
 │   │   └── middleware.go      #   auth, CORS, request logging
-│   ├── usage/                 # in-memory token accounting and aggregation
+│   ├── store/                 # PostgreSQL key + usage persistence and migrations
+│   ├── usage/                 # token accounting types and in-memory fallback
 │   └── translator/            # request/response/stream translation
 │       ├── request.go         #   OpenAI → Mistral request normalization
 │       ├── response.go        #   Mistral → OpenAI response/chunk rewriting

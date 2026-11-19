@@ -62,13 +62,14 @@ func New() *Tracker {
 	}
 }
 
-// Add records one completion. Records without tokens are ignored.
-func (t *Tracker) Add(route, model string, prompt, completion, total, cached int, stream bool) {
+// Add records one completion and returns the stored record. Records without
+// tokens are ignored.
+func (t *Tracker) Add(route, model string, prompt, completion, total, cached int, stream bool) (Record, bool) {
 	if total == 0 {
 		total = prompt + completion
 	}
 	if prompt == 0 && completion == 0 && total == 0 {
-		return
+		return Record{}, false
 	}
 	if model == "" {
 		model = "unknown"
@@ -109,6 +110,7 @@ func (t *Tracker) Add(route, model string, prompt, completion, total, cached int
 	if len(t.recent) > 200 {
 		t.recent = t.recent[len(t.recent)-200:]
 	}
+	return record, true
 }
 
 // Snapshot returns a copy of the current aggregates, newest records first.

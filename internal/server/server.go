@@ -8,6 +8,7 @@ import (
 
 	"vibe-api/internal/config"
 	"vibe-api/internal/mistral"
+	"vibe-api/internal/store"
 	"vibe-api/internal/usage"
 )
 
@@ -16,12 +17,13 @@ type Server struct {
 	cfg      config.Config
 	upstream *mistral.Client
 	tracker  *usage.Tracker
+	db       *store.Postgres
 	log      *slog.Logger
 }
 
-// New builds a Server.
-func New(cfg config.Config, upstream *mistral.Client, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, upstream: upstream, tracker: usage.New(), log: log}
+// New builds a Server. db may be nil to keep the key and usage in memory.
+func New(cfg config.Config, upstream *mistral.Client, db *store.Postgres, log *slog.Logger) *Server {
+	return &Server{cfg: cfg, upstream: upstream, tracker: usage.New(), db: db, log: log}
 }
 
 // Router returns the fully configured Gin engine.

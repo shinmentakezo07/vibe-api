@@ -4,6 +4,7 @@ export type Status = {
   anthropicModel: string
   proxyAuth: boolean
   upstream: string
+  storage: "postgres" | "memory"
 }
 
 export type Model = {
