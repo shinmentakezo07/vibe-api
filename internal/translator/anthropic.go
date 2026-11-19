@@ -89,7 +89,13 @@ func anthropicAssistantMessage(content any) map[string]any {
 		case "tool_use":
 			name, _ := raw["name"].(string)
 			id, _ := raw["id"].(string)
-			arguments, _ := json.Marshal(raw["input"])
+			// A missing input must not serialize as the string "null":
+			// OpenAI arguments is a JSON object string.
+			input, ok := raw["input"].(map[string]any)
+			if !ok {
+				input = map[string]any{}
+			}
+			arguments, _ := json.Marshal(input)
 			calls = append(calls, map[string]any{
 				"id":   id,
 				"type": "function",

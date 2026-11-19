@@ -18,7 +18,7 @@ func nextCallSeq() uint64 { return callSeq.Add(1) }
 // tools/tool_calls and makes every tool call wire-safe for Mistral.
 func translateTools(payload map[string]any) {
 	legacyFunctions(payload)
-
+	normalizeToolChoice(payload)
 	messages, _ := payload["messages"].([]any)
 	callIDs := map[string]string{} // function name -> call id, for legacy results
 
@@ -88,6 +88,32 @@ func legacyFunctions(payload map[string]any) {
 				"function": map[string]any{"name": name},
 			}
 		}
+	}
+}
+
+// normalizeToolChoice maps the object forms OpenAI and OpenRouter clients send
+// onto what Mistral's schema accepts. An object with only a mode type —
+// {"type":"required"} or {"type":"allowed_tools"} — is not a valid Mistral
+// ToolChoice (which requires a function); it becomes the string form.
+// Anthropic's {"type":"any"} arrives here too, via anthropicToolChoice, so it
+// must map as well.
+func normalizeToolChoice(payload map[string]any) {
+	choice, ok := payload["tool_choice"].(map[string]any)
+	if !ok {
+		return
+	}
+	if function, ok := choice["function"].(map[string]any); ok {
+		if name, _ := function["name"].(string); name != "" {
+			payload["tool_choice"] = map[string]any{
+				"type":     "function",
+				"function": map[string]any{"name": name},
+			}
+			return
+		}
+	}
+	switch choice["type"] {
+	case "required", "any", "allowed_tools":
+		payload["tool_choice"] = "required"
 	}
 }
 
