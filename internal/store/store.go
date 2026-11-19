@@ -42,11 +42,16 @@ CREATE TABLE IF NOT EXISTS usage_records (
     completion_tokens   INTEGER NOT NULL,
     total_tokens        INTEGER NOT NULL,
     cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+    reasoning_tokens    INTEGER NOT NULL DEFAULT 0,
+    latency_ms          INTEGER NOT NULL DEFAULT 0,
     stream              BOOLEAN NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS usage_records_created_at_idx
     ON usage_records (created_at DESC);
+
+ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS reasoning_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE usage_records ADD COLUMN IF NOT EXISTS latency_ms INTEGER NOT NULL DEFAULT 0;
 `
 
 // Postgres is the durable settings and usage store.
@@ -236,9 +241,9 @@ func (p *Postgres) SaveRoundRobin(ctx context.Context, enabled bool) error {
 func (p *Postgres) AddUsage(ctx context.Context, r usage.Record) error {
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO usage_records
-			(created_at, route, model, prompt_tokens, completion_tokens, total_tokens, cached_input_tokens, stream)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, r.Time, r.Route, r.Model, r.Prompt, r.Completion, r.Total, r.CachedInput, r.Stream)
+			(created_at, route, model, prompt_tokens, completion_tokens, total_tokens, cached_input_tokens, reasoning_tokens, latency_ms, stream)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, r.Time, r.Route, r.Model, r.Prompt, r.Completion, r.Total, r.CachedInput, r.Reasoning, r.LatencyMS, r.Stream)
 	if err != nil {
 		return fmt.Errorf("insert usage: %w", err)
 	}
@@ -254,6 +259,8 @@ func (p *Postgres) Usage(ctx context.Context, limit int) (usage.Snapshot, error)
 		       COALESCE(sum(prompt_tokens), 0),
 		       COALESCE(sum(completion_tokens), 0),
 		       COALESCE(sum(total_tokens), 0),
+		       COALESCE(sum(cached_input_tokens), 0),
+		       COALESCE(sum(reasoning_tokens), 0),
 		       COALESCE(min(created_at), now())
 		FROM usage_records
 	`).Scan(
@@ -261,6 +268,8 @@ func (p *Postgres) Usage(ctx context.Context, limit int) (usage.Snapshot, error)
 		&snapshot.Totals.Prompt,
 		&snapshot.Totals.Completion,
 		&snapshot.Totals.Total,
+		&snapshot.Totals.Cached,
+		&snapshot.Totals.Reasoning,
 		&snapshot.Since,
 	)
 	if err != nil {
@@ -271,7 +280,9 @@ func (p *Postgres) Usage(ctx context.Context, limit int) (usage.Snapshot, error)
 		SELECT model, count(*),
 		       COALESCE(sum(prompt_tokens), 0),
 		       COALESCE(sum(completion_tokens), 0),
-		       COALESCE(sum(total_tokens), 0)
+		       COALESCE(sum(total_tokens), 0),
+		       COALESCE(sum(cached_input_tokens), 0),
+		       COALESCE(sum(reasoning_tokens), 0)
 		FROM usage_records
 		GROUP BY model
 		ORDER BY count(*) DESC, model
@@ -282,7 +293,7 @@ func (p *Postgres) Usage(ctx context.Context, limit int) (usage.Snapshot, error)
 	snapshot.ByModel = make([]usage.ModelTotals, 0)
 	for rows.Next() {
 		var m usage.ModelTotals
-		if err := rows.Scan(&m.Model, &m.Totals.Requests, &m.Totals.Prompt, &m.Totals.Completion, &m.Totals.Total); err != nil {
+		if err := rows.Scan(&m.Model, &m.Totals.Requests, &m.Totals.Prompt, &m.Totals.Completion, &m.Totals.Total, &m.Totals.Cached, &m.Totals.Reasoning); err != nil {
 			rows.Close()
 			return usage.Snapshot{}, fmt.Errorf("scan model usage: %w", err)
 		}
@@ -296,7 +307,7 @@ func (p *Postgres) Usage(ctx context.Context, limit int) (usage.Snapshot, error)
 	recent, err := p.pool.Query(ctx, `
 		SELECT id, created_at, route, model,
 		       prompt_tokens, completion_tokens, total_tokens,
-		       cached_input_tokens, stream
+		       cached_input_tokens, reasoning_tokens, latency_ms, stream
 		FROM usage_records
 		ORDER BY created_at DESC, id DESC
 		LIMIT $1
@@ -313,7 +324,7 @@ func (p *Postgres) Usage(ctx context.Context, limit int) (usage.Snapshot, error)
 		if err := recent.Scan(
 			&id, &rec.Time, &rec.Route, &rec.Model,
 			&rec.Prompt, &rec.Completion, &rec.Total,
-			&rec.CachedInput, &rec.Stream,
+			&rec.CachedInput, &rec.Reasoning, &rec.LatencyMS, &rec.Stream,
 		); err != nil {
 			recent.Close()
 			return usage.Snapshot{}, fmt.Errorf("scan recent usage: %w", err)

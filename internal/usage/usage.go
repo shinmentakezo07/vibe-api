@@ -19,6 +19,8 @@ type Record struct {
 	Total       int       `json:"totalTokens"`
 	Stream      bool      `json:"stream"`
 	CachedInput int       `json:"cachedInputTokens"`
+	Reasoning   int       `json:"reasoningTokens"`
+	LatencyMS   int       `json:"latencyMs"`
 }
 
 // Totals aggregates token counts.
@@ -27,6 +29,21 @@ type Totals struct {
 	Prompt     int `json:"promptTokens"`
 	Completion int `json:"completionTokens"`
 	Total      int `json:"totalTokens"`
+	Cached     int `json:"cachedTokens"`
+	Reasoning  int `json:"reasoningTokens"`
+}
+
+// Sample is one completion observed by the proxy.
+type Sample struct {
+	Route      string
+	Model      string
+	Prompt     int
+	Completion int
+	Total      int
+	Cached     int
+	Reasoning  int
+	LatencyMS  int
+	Stream     bool
 }
 
 // ModelTotals is the aggregate for one model.
@@ -64,15 +81,15 @@ func New() *Tracker {
 
 // Add records one completion and returns the stored record. Records without
 // tokens are ignored.
-func (t *Tracker) Add(route, model string, prompt, completion, total, cached int, stream bool) (Record, bool) {
-	if total == 0 {
-		total = prompt + completion
+func (t *Tracker) Add(sample Sample) (Record, bool) {
+	if sample.Total == 0 {
+		sample.Total = sample.Prompt + sample.Completion
 	}
-	if prompt == 0 && completion == 0 && total == 0 {
+	if sample.Prompt == 0 && sample.Completion == 0 && sample.Total == 0 {
 		return Record{}, false
 	}
-	if model == "" {
-		model = "unknown"
+	if sample.Model == "" {
+		sample.Model = "unknown"
 	}
 
 	t.mu.Lock()
@@ -82,29 +99,35 @@ func (t *Tracker) Add(route, model string, prompt, completion, total, cached int
 	record := Record{
 		ID:          fmt.Sprintf("req_%06d", t.nextID),
 		Time:        time.Now(),
-		Route:       route,
-		Model:       model,
-		Prompt:      prompt,
-		Completion:  completion,
-		Total:       total,
-		Stream:      stream,
-		CachedInput: cached,
+		Route:       sample.Route,
+		Model:       sample.Model,
+		Prompt:      sample.Prompt,
+		Completion:  sample.Completion,
+		Total:       sample.Total,
+		Stream:      sample.Stream,
+		CachedInput: sample.Cached,
+		Reasoning:   sample.Reasoning,
+		LatencyMS:   sample.LatencyMS,
 	}
 
 	t.totals.Requests++
-	t.totals.Prompt += prompt
-	t.totals.Completion += completion
-	t.totals.Total += total
+	t.totals.Prompt += sample.Prompt
+	t.totals.Completion += sample.Completion
+	t.totals.Total += sample.Total
+	t.totals.Cached += sample.Cached
+	t.totals.Reasoning += sample.Reasoning
 
-	modelTotals := t.byModel[model]
+	modelTotals := t.byModel[sample.Model]
 	if modelTotals == nil {
 		modelTotals = &Totals{}
-		t.byModel[model] = modelTotals
+		t.byModel[sample.Model] = modelTotals
 	}
 	modelTotals.Requests++
-	modelTotals.Prompt += prompt
-	modelTotals.Completion += completion
-	modelTotals.Total += total
+	modelTotals.Prompt += sample.Prompt
+	modelTotals.Completion += sample.Completion
+	modelTotals.Total += sample.Total
+	modelTotals.Cached += sample.Cached
+	modelTotals.Reasoning += sample.Reasoning
 
 	t.recent = append(t.recent, record)
 	if len(t.recent) > 200 {
@@ -142,6 +165,7 @@ type Tokens struct {
 	Completion int
 	Total      int
 	Cached     int
+	Reasoning  int
 	OK         bool
 }
 
@@ -151,21 +175,36 @@ func FromMessage(data []byte) (string, Tokens) {
 	var payload struct {
 		Model string `json:"model"`
 		Usage *struct {
-			PromptTokens       int `json:"prompt_tokens"`
-			CompletionTokens   int `json:"completion_tokens"`
-			TotalTokens        int `json:"total_tokens"`
-			PromptTokensCached int `json:"prompt_tokens_cached"`
+			PromptTokens        int `json:"prompt_tokens"`
+			CompletionTokens    int `json:"completion_tokens"`
+			TotalTokens         int `json:"total_tokens"`
+			PromptTokensCached  int `json:"prompt_tokens_cached"`
+			PromptTokensDetails *struct {
+				CachedTokens int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
+			CompletionTokensDetails *struct {
+				ReasoningTokens int `json:"reasoning_tokens"`
+			} `json:"completion_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil || payload.Usage == nil {
 		return "", Tokens{}
 	}
 	u := payload.Usage
+	cached := u.PromptTokensCached
+	if u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens > 0 {
+		cached = u.PromptTokensDetails.CachedTokens
+	}
+	reasoning := 0
+	if u.CompletionTokensDetails != nil {
+		reasoning = u.CompletionTokensDetails.ReasoningTokens
+	}
 	return payload.Model, Tokens{
 		Prompt:     u.PromptTokens,
 		Completion: u.CompletionTokens,
 		Total:      u.TotalTokens,
-		Cached:     u.PromptTokensCached,
+		Cached:     cached,
+		Reasoning:  reasoning,
 		OK:         true,
 	}
 }

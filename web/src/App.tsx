@@ -2,7 +2,6 @@ import { useEffect, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ArrowDownToLine,
-  ArrowUpFromLine,
   Boxes,
   Database,
   ExternalLink,
@@ -19,8 +18,7 @@ import { toast } from "sonner"
 import { api, compactNumber, formatNumber } from "@/lib/api"
 import { KeysPage } from "@/components/keys-page"
 import { ModelsPage } from "@/components/models-page"
-import { ModelsPanel } from "@/components/models-panel"
-import { RecentRequests } from "@/components/recent-requests"
+import { RequestLog } from "@/components/request-log"
 import { StatCard } from "@/components/stat-card"
 import { UsagePanel } from "@/components/usage-panel"
 import { Badge } from "@/components/ui/badge"
@@ -51,14 +49,6 @@ function App() {
     refetchInterval: 3_000,
     retry: 1,
   })
-  const models = useQuery({
-    queryKey: ["models"],
-    queryFn: api.models,
-    enabled: status.data?.keyConfigured === true,
-    refetchInterval: 60_000,
-    retry: 1,
-  })
-
   useEffect(() => {
     const sync = () => setView(currentView())
     window.addEventListener("hashchange", sync)
@@ -70,9 +60,8 @@ function App() {
     setView(next)
   }
 
-  const refreshing = status.isFetching || usage.isFetching || models.isFetching
+  const refreshing = status.isFetching || usage.isFetching
   const totals = usage.data?.totals
-  const activeModels = models.data?.data.length ?? 0
 
   const refresh = async () => {
     await queryClient.invalidateQueries()
@@ -242,6 +231,18 @@ function App() {
             </button>
           ) : null}
 
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight">Usage</h2>
+              <p className="text-xs text-muted-foreground">
+                Token accounting, throughput, and latency across every proxied call.
+              </p>
+            </div>
+            <span className="text-[10px] tracking-wider text-muted-foreground uppercase">
+              Refreshes every 3 seconds
+            </span>
+          </div>
+
           <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
             <StatCard
               label="Requests"
@@ -253,28 +254,26 @@ function App() {
               tone="violet"
             />
             <StatCard
-              label="Input tokens"
-              value={totals ? compactNumber(totals.promptTokens) : "—"}
-              detail="Prompt tokens billed upstream"
-              icon={ArrowDownToLine}
+              label="Total tokens"
+              value={totals ? compactNumber(totals.totalTokens) : "—"}
+              detail={`${compactNumber(totals?.promptTokens ?? 0)} in · ${compactNumber(totals?.completionTokens ?? 0)} out`}
+              icon={Database}
               tone="cyan"
               delay={40}
             />
             <StatCard
-              label="Output tokens"
-              value={totals ? compactNumber(totals.completionTokens) : "—"}
-              detail="Completions and reasoning"
-              icon={ArrowUpFromLine}
+              label="Cached tokens"
+              value={totals ? compactNumber(totals.cachedTokens) : "—"}
+              detail="Served from cache"
+              icon={ArrowDownToLine}
               tone="emerald"
               delay={80}
             />
             <StatCard
-              label="Models"
-              value={
-                !status.data?.keyConfigured ? "—" : models.data ? formatNumber(activeModels) : "…"
-              }
-              detail={status.data?.keyConfigured ? "Available in catalog" : "Waiting for API key"}
-              icon={Boxes}
+              label="Reasoning tokens"
+              value={totals ? compactNumber(totals.reasoningTokens) : "—"}
+              detail="Reasoning model output"
+              icon={Sparkles}
               tone="amber"
               delay={120}
             />
@@ -282,12 +281,7 @@ function App() {
 
           <UsagePanel snapshot={usage.data} pending={usage.isPending} />
 
-          <ModelsPanel
-            enabled={status.data?.keyConfigured === true}
-            onViewAll={() => navigate("models")}
-          />
-
-          <RecentRequests snapshot={usage.data} />
+          <RequestLog snapshot={usage.data} />
             </>
           )}
         </main>

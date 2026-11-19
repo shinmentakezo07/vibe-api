@@ -26,6 +26,7 @@ func (s *Server) health(c *gin.Context) {
 // chatCompletions accepts OpenAI chat requests, normalizes them for Mistral,
 // and relays the reply, streaming included.
 func (s *Server) chatCompletions(c *gin.Context) {
+	started := time.Now()
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxBodyBytes+1))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, openai.NewError(err.Error(), "invalid_request_error"))
@@ -67,7 +68,7 @@ func (s *Server) chatCompletions(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
-	s.relay(c, resp, stream, "/v1/chat/completions", model)
+	s.relay(c, resp, stream, "/v1/chat/completions", model, started)
 }
 
 func (s *Server) listModels(c *gin.Context) {
@@ -77,7 +78,7 @@ func (s *Server) listModels(c *gin.Context) {
 		return
 	}
 	defer resp.Body.Close()
-	s.relay(c, resp, false, "/v1/models", "")
+	s.relay(c, resp, false, "/v1/models", "", time.Now())
 }
 
 func (s *Server) getModel(c *gin.Context) {
@@ -87,11 +88,11 @@ func (s *Server) getModel(c *gin.Context) {
 		return
 	}
 	defer resp.Body.Close()
-	s.relay(c, resp, false, "/v1/models", "")
+	s.relay(c, resp, false, "/v1/models", "", time.Now())
 }
 
 // relay copies the upstream status, selected headers, and body to the caller.
-func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool, route, model string) {
+func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool, route, model string, started time.Time) {
 	copyResponseHeaders(c.Writer.Header(), resp.Header)
 	if stream {
 		c.Header("Cache-Control", "no-cache")
@@ -108,7 +109,7 @@ func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool, route, 
 
 	if stream {
 		streamSSE(c.Writer, resp.Body, s.log, func(data []byte) {
-			s.track(route, model, data, true)
+			s.track(route, model, data, true, time.Since(started))
 		})
 		return
 	}
@@ -121,7 +122,7 @@ func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool, route, 
 		return
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		s.track(route, model, body, false)
+		s.track(route, model, body, false, time.Since(started))
 		if rewritten, rerr := translator.Response(body); rerr == nil {
 			body = rewritten
 		}
@@ -132,7 +133,7 @@ func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool, route, 
 }
 
 // track records token usage from an upstream JSON payload.
-func (s *Server) track(route, model string, data []byte, stream bool) {
+func (s *Server) track(route, model string, data []byte, stream bool, latency time.Duration) {
 	reported, tokens := usage.FromMessage(data)
 	if !tokens.OK {
 		return
@@ -140,7 +141,17 @@ func (s *Server) track(route, model string, data []byte, stream bool) {
 	if reported != "" {
 		model = reported
 	}
-	record, ok := s.tracker.Add(route, model, tokens.Prompt, tokens.Completion, tokens.Total, tokens.Cached, stream)
+	record, ok := s.tracker.Add(usage.Sample{
+		Route:      route,
+		Model:      model,
+		Prompt:     tokens.Prompt,
+		Completion: tokens.Completion,
+		Total:      tokens.Total,
+		Cached:     tokens.Cached,
+		Reasoning:  tokens.Reasoning,
+		LatencyMS:  int(latency.Milliseconds()),
+		Stream:     stream,
+	})
 	if !ok || s.db == nil {
 		return
 	}

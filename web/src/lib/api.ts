@@ -45,6 +45,8 @@ export type UsageTotals = {
   promptTokens: number
   completionTokens: number
   totalTokens: number
+  cachedTokens: number
+  reasoningTokens: number
 }
 
 export type UsageRecord = {
@@ -57,6 +59,8 @@ export type UsageRecord = {
   totalTokens: number
   stream: boolean
   cachedInputTokens: number
+  reasoningTokens: number
+  latencyMs: number
 }
 
 export type UsageSnapshot = {

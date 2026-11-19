@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -16,6 +17,7 @@ import (
 
 // anthropicMessages serves the Anthropic Messages API on top of Mistral.
 func (s *Server) anthropicMessages(c *gin.Context) {
+	started := time.Now()
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxBodyBytes+1))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, anthropicError("invalid_request_error", err.Error()))
@@ -66,7 +68,7 @@ func (s *Server) anthropicMessages(c *gin.Context) {
 		c.Header("X-Accel-Buffering", "no")
 		c.Status(resp.StatusCode)
 		streamAnthropic(c.Writer, resp.Body, translator.NewAnthropicStream(model, ""), s, func(data []byte) {
-			s.track("/v1/messages", model, data, true)
+			s.track("/v1/messages", model, data, true, time.Since(started))
 		})
 		return
 	}
@@ -78,7 +80,7 @@ func (s *Server) anthropicMessages(c *gin.Context) {
 		}
 		return
 	}
-	s.track("/v1/messages", model, body, false)
+	s.track("/v1/messages", model, body, false, time.Since(started))
 	translated, err := translator.AnthropicResponse(body)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, anthropicError("api_error", err.Error()))

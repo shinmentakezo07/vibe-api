@@ -8,7 +8,7 @@ A Go proxy that exposes OpenAI-compatible (and Anthropic Messages) endpoints bac
 - **Anthropic compatibility** — `POST /v1/messages`, translating Anthropic content blocks, tool use, thinking effort, and system prompts into Mistral messages, and rewriting responses back (streaming included as Anthropic SSE events).
 - **Streaming** — SSE relayed line-by-line; Mistral chunks are rewritten into OpenAI or Anthropic shape on the fly.
 - **Tool calling** — normalizes tool definitions and tool calls, and maps legacy OpenAI `functions`/`function_call` onto the modern `tools`/`tool_calls` surface.
-- **Web dashboard** — React + Tailwind + shadcn/ui control plane for API-key pools, round-robin rotation, a dedicated model catalog, and token usage.
+- **Web dashboard** — React + Tailwind + shadcn/ui control plane for API-key pools, round-robin rotation, a dedicated model catalog, and live token, throughput, and latency analytics.
 - **Optional auth** — set `PROXY_API_KEY` to require a matching bearer token on all `/v1` and `/api` routes.
 - **CORS** — browser-based clients can call the proxy directly.
 - **Debug logging** — `DEBUG=1` logs request bodies, headers, and upstream error payloads.
@@ -38,8 +38,8 @@ npm --prefix web run dev    # terminal 2 → http://localhost:5173
 ### Web dashboard
 
 - **API keys** — a dedicated page at `/#keys` adds, enables, disables, and deletes multiple Mistral keys. New keys are validated before joining the pool. Optional round-robin rotates each request across enabled keys; when disabled, the first enabled key is used. Secrets are never returned, only masked hints.
-- **Models** — a dedicated page at `/#models` lists the full `GET /v1/models` catalog with search, capability filters, context windows, copyable ids, and live counts for tool calling, vision, and reasoning. The dashboard keeps a compact preview with a link to the full catalog.
-- **Usage** — the proxy records prompt/completion tokens for OpenAI and Anthropic requests, streaming included. The dashboard polls `/api/usage` every 3 seconds and renders per-model and per-minute token flow plus recent requests.
+- **Models** — a dedicated page at `/#models` lists the full `GET /v1/models` catalog with search, capability filters, context windows, copyable ids, and live counts for tool calling, vision, and reasoning.
+- **Usage** — the Overview page polls `/api/usage` every 3 seconds and shows total, cached, and reasoning tokens; rolling TPM/TPS, cache-hit, and reasoning-share gauges with a 60-second pulse; output throughput over the last 20 minutes; a p50/p95 latency distribution; and a request log with per-call token, cache, reasoning, and latency accounting. Prompt/completion/cached/reasoning usage is captured for OpenAI and Anthropic requests, streaming included.
 - **Admin API** — `GET /api/status`, `GET /api/keys`, `POST /api/keys`
   (`{"label":"...","apiKey":"..."}`), `PATCH /api/keys/:id`
   (`{"enabled":false,"label":"..."}`), `DELETE /api/keys/:id`,
@@ -129,7 +129,7 @@ Tables created automatically:
 
 - `api_keys` — labels, encrypted secrets, enabled state, timestamps.
 - `settings` — round-robin state and the legacy single-key migration slot.
-- `usage_records` — one row per billed completion, indexed by `created_at`.
+- `usage_records` — one row per billed completion with prompt, completion, total, cached-input, reasoning, and latency fields, indexed by `created_at`. Existing tables gain the new fields automatically on startup.
 
 A key saved by the old single-key schema is imported as `Imported` on first
 start. Set `APP_SECRET` to encrypt stored keys with AES-256-GCM. Without it keys
