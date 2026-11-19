@@ -220,8 +220,10 @@ All settings come from environment variables (see `internal/config/config.go`).
 ├── railway.toml               # Railway Dockerfile build + /healthz check
 ├── cmd/vibe-api/main.go       # entry point: config, HTTP server, graceful shutdown
 ├── internal/
-│   ├── config/config.go       # environment-based configuration and validation
-│   ├── mistral/client.go      # authenticated upstream HTTP client (SSE-friendly)
+│   ├── config/                # environment-based configuration (config_test.go)
+│   ├── mistral/               # upstream HTTP client and credential handling
+│   │   ├── client.go          #   authenticated upstream client (SSE-friendly)
+│   │   └── credentials.go     #   API-key pool plumbing for upstream calls
 │   ├── openai/openai.go       # OpenAI wire types (errors, stream flag)
 │   ├── server/                # Gin router, middleware, handlers, SSE relays
 │   │   ├── server.go          #   route registration
@@ -229,10 +231,10 @@ All settings come from environment variables (see `internal/config/config.go`).
 │   │   ├── anthropic.go       #   Anthropic Messages endpoint
 │   │   ├── admin.go           #   key management + usage endpoints
 │   │   ├── ui.go              #   dashboard static serving / SPA fallback
-│   │   ├── stream.go          #   SSE relay + chunk rewriting
+│   │   ├── stream.go          #   SSE relay + chunk rewriting (stream_test.go)
 │   │   └── middleware.go      #   auth, CORS, request logging
 │   ├── keys/                  # key pool, enablement, and round-robin selection
-│   ├── store/                 # PostgreSQL key + usage persistence and migrations
+│   ├── store/                 # PostgreSQL persistence and migrations (store.go, codec.go)
 │   ├── usage/                 # token accounting types and in-memory fallback
 │   └── translator/            # request/response/stream translation
 │       ├── request.go         #   OpenAI → Mistral request normalization
@@ -240,8 +242,6 @@ All settings come from environment variables (see `internal/config/config.go`).
 │       ├── anthropic.go       #   Anthropic Messages ⇄ Mistral requests/responses
 │       ├── anthropic_stream.go #  Mistral chunks → Anthropic SSE events
 │       ├── tools.go           #   tool-call mapping and legacy function support
-│       ├── translator_test.go #   OpenAI-side translation tests
-│       └── anthropic_test.go  #   Anthropic translation and stream tests
 └── web/                       # React + Vite + Tailwind + shadcn/ui dashboard
     ├── src/components/ui/     # shadcn component sources
     ├── src/components/        # pages and panels (models, usage, keys)
