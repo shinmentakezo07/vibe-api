@@ -246,3 +246,55 @@ func TestRequestOpenRouterReasoning(t *testing.T) {
 		t.Fatalf("effort=%v", payload["reasoning_effort"])
 	}
 }
+
+func TestChunkPreservesToolArgumentFragments(t *testing.T) {
+	first := Chunk([]byte(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"t1","function":{"name":"bash","arguments":""}}]}}]}`))
+	var payload struct {
+		Choices []struct {
+			Delta struct {
+				ToolCalls []struct {
+					ID       string `json:"id"`
+					Function struct {
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"delta"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(first, &payload); err != nil {
+		t.Fatal(err)
+	}
+	call := payload.Choices[0].Delta.ToolCalls[0]
+	if call.Function.Arguments != "" {
+		t.Fatalf("first delta arguments=%q, want empty", call.Function.Arguments)
+	}
+	if call.ID != "t1" {
+		t.Fatalf("first delta id=%q", call.ID)
+	}
+
+	noID := Chunk([]byte(`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"bash"}}]}}]}`))
+	var noIDPayload struct {
+		Choices []struct {
+			Delta struct {
+				ToolCalls []struct {
+					ID string `json:"id"`
+				} `json:"tool_calls"`
+			} `json:"delta"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(noID, &noIDPayload); err != nil {
+		t.Fatal(err)
+	}
+	if got := noIDPayload.Choices[0].Delta.ToolCalls[0].ID; got != "" {
+		t.Fatalf("synthetic id added in stream: %q", got)
+	}
+
+	fragment := []byte(`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"command\":"}}]}}]}`)
+	rewritten := Chunk(fragment)
+	if err := json.Unmarshal(rewritten, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := payload.Choices[0].Delta.ToolCalls[0].Function.Arguments; got != `{"command":` {
+		t.Fatalf("fragment arguments=%q", got)
+	}
+}

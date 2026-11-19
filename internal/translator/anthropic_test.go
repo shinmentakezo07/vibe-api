@@ -137,3 +137,43 @@ func TestAnthropicStreamToolUse(t *testing.T) {
 		t.Fatalf("usage=%#v", usage)
 	}
 }
+
+func TestAnthropicStreamInterleavedToolDeltas(t *testing.T) {
+	stream := NewAnthropicStream("m", "")
+	var starts, stops []int
+	deltas := map[int]string{}
+	collect := func(events []Event) {
+		for _, event := range events {
+			switch event.Name {
+			case "content_block_start":
+				starts = append(starts, int(event.Data["index"].(int)))
+			case "content_block_stop":
+				stops = append(stops, int(event.Data["index"].(int)))
+			case "content_block_delta":
+				index := event.Data["index"].(int)
+				delta := event.Data["delta"].(map[string]any)
+				if partial, ok := delta["partial_json"].(string); ok {
+					deltas[index] += partial
+				}
+			}
+		}
+	}
+	collect(stream.Start())
+	collect(stream.Feed([]byte(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"one"}}]}}]}`)))
+	collect(stream.Feed([]byte(`{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"b","function":{"name":"two"}}]}}]}`)))
+	collect(stream.Feed([]byte(`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"a\":"}}]}}]}`)))
+	collect(stream.Feed([]byte(`{"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"b\":"}}]}}]}`)))
+	collect(stream.Feed([]byte(`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}`)))
+	collect(stream.Feed([]byte(`{"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"2}"}}]}}]}`)))
+	collect(stream.Finish())
+
+	if len(starts) != 2 || starts[0] != 0 || starts[1] != 1 {
+		t.Fatalf("starts=%v", starts)
+	}
+	if deltas[0] != `{"a":1}` || deltas[1] != `{"b":2}` {
+		t.Fatalf("deltas=%#v", deltas)
+	}
+	if len(stops) != 2 || stops[0] != 0 || stops[1] != 1 {
+		t.Fatalf("stops=%v", stops)
+	}
+}

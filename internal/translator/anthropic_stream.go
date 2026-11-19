@@ -1,6 +1,9 @@
 package translator
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"sort"
+)
 
 // Event is one Anthropic SSE event.
 type Event struct {
@@ -76,11 +79,11 @@ func (s *AnthropicStream) Feed(data []byte) []Event {
 	var events []Event
 	if thinking, _ := delta["reasoning_content"].(string); thinking != "" {
 		events = append(events, s.startBlock("thinking")...)
-		events = append(events, s.delta("thinking_delta", map[string]any{"thinking": thinking})...)
+		events = append(events, s.deltaAt(s.open.index, "thinking_delta", map[string]any{"thinking": thinking})...)
 	}
 	if text, _ := delta["content"].(string); text != "" {
 		events = append(events, s.startBlock("text")...)
-		events = append(events, s.delta("text_delta", map[string]any{"text": text})...)
+		events = append(events, s.deltaAt(s.open.index, "text_delta", map[string]any{"text": text})...)
 	}
 
 	if calls, ok := delta["tool_calls"].([]any); ok {
@@ -89,13 +92,15 @@ func (s *AnthropicStream) Feed(data []byte) []Event {
 			index := toolCallIndex(call, i)
 			block := s.tools[index]
 			if block == nil {
-				events = append(events, s.startBlock("tool_use", call)...)
-				block = s.open
-				s.tools[index] = block
+				events = append(events, s.startToolBlock(index, call)...)
+				block = s.tools[index]
+			}
+			if block == nil {
+				continue
 			}
 			function, _ := call["function"].(map[string]any)
 			if arguments, _ := function["arguments"].(string); arguments != "" {
-				events = append(events, s.delta("input_json_delta", map[string]any{
+				events = append(events, s.deltaAt(block.index, "input_json_delta", map[string]any{
 					"partial_json": arguments,
 				})...)
 			}
@@ -120,7 +125,7 @@ func (s *AnthropicStream) Finish() []Event {
 	}
 
 	var events []Event
-	events = append(events, s.closeBlock()...)
+	events = append(events, s.closeAllBlocks()...)
 	events = append(events, Event{Name: "message_delta", Data: map[string]any{
 		"type":  "message_delta",
 		"delta": map[string]any{"stop_reason": anthropicStopReason(s.reason), "stop_sequence": nil},
@@ -130,13 +135,14 @@ func (s *AnthropicStream) Finish() []Event {
 	return events
 }
 
-// startBlock closes the open block and opens one of the given kind. Tool use
-// takes the call's id and name.
-func (s *AnthropicStream) startBlock(kind string, call ...map[string]any) []Event {
-	if s.open != nil && s.open.kind == kind && kind != "tool_use" {
+// startBlock opens a text or thinking block. Starting a new block closes the
+// previous one; open tool blocks stay open so interleaved argument deltas can
+// target their own index.
+func (s *AnthropicStream) startBlock(kind string) []Event {
+	if s.open != nil && s.open.kind == kind {
 		return nil
 	}
-	events := s.closeBlock()
+	events := s.closeTextBlock()
 
 	block := map[string]any{"type": kind}
 	switch kind {
@@ -145,13 +151,6 @@ func (s *AnthropicStream) startBlock(kind string, call ...map[string]any) []Even
 	case "thinking":
 		block["thinking"] = ""
 		block["signature"] = ""
-	case "tool_use":
-		if len(call) > 0 {
-			function, _ := call[0]["function"].(map[string]any)
-			block["id"] = call[0]["id"]
-			block["name"] = function["name"]
-			block["input"] = map[string]any{}
-		}
 	}
 
 	s.open = &contentBlock{index: s.next, kind: kind}
@@ -163,19 +162,37 @@ func (s *AnthropicStream) startBlock(kind string, call ...map[string]any) []Even
 	}})
 }
 
-func (s *AnthropicStream) delta(kind string, delta map[string]any) []Event {
-	if s.open == nil {
-		return nil
-	}
+// startToolBlock opens one tool_use block per tool-call index. It closes the
+// active text block but leaves other tool blocks open.
+func (s *AnthropicStream) startToolBlock(index int, call map[string]any) []Event {
+	events := s.closeTextBlock()
+
+	function, _ := call["function"].(map[string]any)
+	block := &contentBlock{index: s.next, kind: "tool_use"}
+	s.next++
+	s.tools[index] = block
+	return append(events, Event{Name: "content_block_start", Data: map[string]any{
+		"type":  "content_block_start",
+		"index": block.index,
+		"content_block": map[string]any{
+			"type":  "tool_use",
+			"id":    call["id"],
+			"name":  function["name"],
+			"input": map[string]any{},
+		},
+	}})
+}
+
+func (s *AnthropicStream) deltaAt(index int, kind string, delta map[string]any) []Event {
 	delta["type"] = kind
 	return []Event{{Name: "content_block_delta", Data: map[string]any{
 		"type":  "content_block_delta",
-		"index": s.open.index,
+		"index": index,
 		"delta": delta,
 	}}}
 }
 
-func (s *AnthropicStream) closeBlock() []Event {
+func (s *AnthropicStream) closeTextBlock() []Event {
 	if s.open == nil {
 		return nil
 	}
@@ -184,6 +201,28 @@ func (s *AnthropicStream) closeBlock() []Event {
 	return []Event{{Name: "content_block_stop", Data: map[string]any{
 		"type": "content_block_stop", "index": index,
 	}}}
+}
+
+// closeAllBlocks emits one content_block_stop per open block in index order.
+func (s *AnthropicStream) closeAllBlocks() []Event {
+	blocks := make([]*contentBlock, 0, len(s.tools)+1)
+	if s.open != nil {
+		blocks = append(blocks, s.open)
+		s.open = nil
+	}
+	for _, block := range s.tools {
+		blocks = append(blocks, block)
+	}
+	s.tools = map[int]*contentBlock{}
+	sort.Slice(blocks, func(i, j int) bool { return blocks[i].index < blocks[j].index })
+
+	events := make([]Event, 0, len(blocks))
+	for _, block := range blocks {
+		events = append(events, Event{Name: "content_block_stop", Data: map[string]any{
+			"type": "content_block_stop", "index": block.index,
+		}})
+	}
+	return events
 }
 
 func toolCallIndex(call map[string]any, fallback int) int {

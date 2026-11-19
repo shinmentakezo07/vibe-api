@@ -109,8 +109,10 @@ func toolCalls(message map[string]any) []any {
 
 // normalizeToolCalls makes each call match the wire contract Mistral accepts:
 // a string id, type "function", and JSON-string arguments. Stream deltas also
-// get an index so clients can accumulate them.
-func normalizeToolCalls(message map[string]any, ensureIndex bool) bool {
+// get an index so clients can accumulate them. Streaming must preserve empty
+// argument fragments: injecting "{}" or a synthetic id into every delta breaks
+// clients that concatenate argument fragments by index.
+func normalizeToolCalls(message map[string]any, stream bool) bool {
 	calls, ok := message["tool_calls"].([]any)
 	if !ok {
 		return false
@@ -123,7 +125,7 @@ func normalizeToolCalls(message map[string]any, ensureIndex bool) bool {
 		if _, ok := call["type"]; !ok {
 			call["type"] = "function"
 		}
-		if ensureIndex {
+		if stream {
 			if _, ok := call["index"]; !ok {
 				call["index"] = i
 			}
@@ -134,17 +136,21 @@ func normalizeToolCalls(message map[string]any, ensureIndex bool) bool {
 		}
 		switch arguments := function["arguments"].(type) {
 		case string:
-			if arguments == "" {
+			if arguments == "" && !stream {
 				function["arguments"] = "{}"
 			}
 		case nil:
-			function["arguments"] = "{}"
+			if stream {
+				delete(function, "arguments")
+			} else {
+				function["arguments"] = "{}"
+			}
 		default:
 			if encoded, err := json.Marshal(arguments); err == nil {
 				function["arguments"] = string(encoded)
 			}
 		}
-		if _, ok := call["id"]; !ok {
+		if _, ok := call["id"]; !ok && !stream {
 			call["id"] = callID(function)
 		}
 	}
