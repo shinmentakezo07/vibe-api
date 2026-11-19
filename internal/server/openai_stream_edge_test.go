@@ -21,6 +21,7 @@ func relayOpenAI(t *testing.T, frames []string) string {
 	streamSSE(c.Writer, strings.NewReader(strings.Join(frames, "\n\n")), slog.New(slog.NewTextHandler(io.Discard, nil)), func([]byte) {})
 	return rec.Body.String()
 }
+
 // decodeChunks parses every non-[DONE] SSE data frame the relay emitted.
 func decodeChunks(t *testing.T, body string) []map[string]any {
 	t.Helper()
