@@ -1,102 +1,13 @@
 import { useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import {
-  ArrowUpRight,
-  BrainCircuit,
-  Check,
-  Copy,
-  Cpu,
-  Eye,
-  FunctionSquare,
-  Search,
-  Sparkles,
-  TriangleAlert,
-} from "lucide-react"
-import { toast } from "sonner"
+import { ArrowUpRight, Cpu, Search, TriangleAlert } from "lucide-react"
 
 import { api, type Model } from "@/lib/api"
-import { Badge } from "@/components/ui/badge"
+import { ModelCard } from "@/components/model-card"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-
-const capabilityMeta: Record<string, { label: string; icon: typeof Cpu }> = {
-  completion_chat: { label: "Chat", icon: Sparkles },
-  function_calling: { label: "Tools", icon: FunctionSquare },
-  vision: { label: "Vision", icon: Eye },
-  reasoning: { label: "Reasoning", icon: BrainCircuit },
-  completion_fim: { label: "FIM", icon: Cpu },
-  fine_tuning: { label: "Fine-tune", icon: Cpu },
-  ocr: { label: "OCR", icon: Cpu },
-}
-
-function contextLabel(value?: number) {
-  if (!value) return "—"
-  if (value >= 1000) return `${Math.round(value / 1000)}K context`
-  return `${value} context`
-}
-
-function ModelCard({ model }: { model: Model }) {
-  const [copied, setCopied] = useState(false)
-  const capabilities = Object.entries(model.capabilities ?? {})
-    .filter(([key, enabled]) => enabled && capabilityMeta[key])
-    .slice(0, 4)
-
-  return (
-    <Card className="group relative overflow-hidden border-border/60 bg-card/50 transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-[0_20px_50px_-24px_rgba(139,92,246,0.55)]">
-      <div className="pointer-events-none absolute inset-x-0 -top-24 h-32 bg-gradient-to-b from-primary/15 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-      <CardHeader className="gap-1.5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <CardTitle className="truncate text-[0.95rem] font-semibold tracking-tight">
-              {model.name || model.id}
-            </CardTitle>
-            <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{model.id}</p>
-          </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
-            aria-label="Copy model id"
-            onClick={async () => {
-              await navigator.clipboard.writeText(model.id)
-              setCopied(true)
-              toast.success("Model id copied")
-              window.setTimeout(() => setCopied(false), 1500)
-            }}
-          >
-            {copied ? <Check className="text-emerald-400" /> : <Copy />}
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <p className="line-clamp-2 min-h-8 text-xs leading-relaxed text-muted-foreground">
-          {model.description || "No description provided by the upstream catalog."}
-        </p>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant="secondary" className="font-normal text-[10px] text-muted-foreground">
-            {contextLabel(model.max_context_length)}
-          </Badge>
-          {capabilities.map(([key]) => {
-            const meta = capabilityMeta[key]
-            const Icon = meta.icon
-            return (
-              <Badge
-                key={key}
-                variant="outline"
-                className="gap-1 border-border/70 bg-background/30 font-normal text-[10px] text-foreground/80"
-              >
-                <Icon className="size-3" />
-                {meta.label}
-              </Badge>
-            )
-          })}
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
 
 const filters = [
   { key: "chat", label: "Chat" },
@@ -117,10 +28,9 @@ function matchesFilter(model: Model, filter: Filter): boolean {
   return capabilities.reasoning === true
 }
 
-export function ModelsPanel({ enabled }: { enabled: boolean }) {
+export function ModelsPanel({ enabled, onViewAll }: { enabled: boolean; onViewAll: () => void }) {
   const [search, setSearch] = useState("")
   const [filter, setFilter] = useState<Filter>("chat")
-  const [showAll, setShowAll] = useState(false)
   const models = useQuery({
     queryKey: ["models"],
     queryFn: api.models,
@@ -139,7 +49,7 @@ export function ModelsPanel({ enabled }: { enabled: boolean }) {
     )
   }, [models.data, search, filter])
 
-  const visible = showAll ? filtered : filtered.slice(0, 9)
+  const visible = filtered.slice(0, 9)
 
   return (
     <Card className="glass animate-rise overflow-hidden">
@@ -177,10 +87,7 @@ export function ModelsPanel({ enabled }: { enabled: boolean }) {
                   ? "h-7 border border-border/70 bg-secondary/80 px-2.5 text-[11px]"
                   : "h-7 px-2.5 text-[11px] text-muted-foreground"
               }
-              onClick={() => {
-                setFilter(option.key)
-                setShowAll(false)
-              }}
+              onClick={() => setFilter(option.key)}
             >
               {option.label}
             </Button>
@@ -222,8 +129,9 @@ export function ModelsPanel({ enabled }: { enabled: boolean }) {
         )}
         {filtered.length > 9 ? (
           <div className="mt-4 flex justify-center">
-            <Button variant="outline" size="sm" onClick={() => setShowAll((current) => !current)}>
-              {showAll ? "Show fewer" : `Show all ${filtered.length} models`}
+            <Button variant="outline" size="sm" onClick={onViewAll}>
+              Browse all {filtered.length} matching models
+              <ArrowUpRight />
             </Button>
           </div>
         ) : null}
@@ -232,14 +140,23 @@ export function ModelsPanel({ enabled }: { enabled: boolean }) {
             <span>
               Showing {visible.length} of {filtered.length} matching · {models.data.data.length} total
             </span>
-            <a
-              className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
-              href="/v1/models"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Raw JSON <ArrowUpRight className="size-3" />
-            </a>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 font-medium text-primary transition-colors hover:text-primary/80"
+                onClick={onViewAll}
+              >
+                Full catalog <ArrowUpRight className="size-3" />
+              </button>
+              <a
+                className="inline-flex items-center gap-1 transition-colors hover:text-foreground"
+                href="/v1/models"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Raw JSON <ArrowUpRight className="size-3" />
+              </a>
+            </div>
           </div>
         ) : null}
       </CardContent>

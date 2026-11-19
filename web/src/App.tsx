@@ -18,6 +18,7 @@ import { toast } from "sonner"
 
 import { api, compactNumber, formatNumber } from "@/lib/api"
 import { KeysPage } from "@/components/keys-page"
+import { ModelsPage } from "@/components/models-page"
 import { ModelsPanel } from "@/components/models-panel"
 import { RecentRequests } from "@/components/recent-requests"
 import { StatCard } from "@/components/stat-card"
@@ -26,10 +27,12 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "cn"
 
-type View = "dashboard" | "keys"
+type View = "dashboard" | "keys" | "models"
 
 function currentView(): View {
-  return window.location.hash === "#keys" ? "keys" : "dashboard"
+  const hash = window.location.hash.replace("#", "")
+  if (hash === "keys" || hash === "models") return hash
+  return "dashboard"
 }
 
 function App() {
@@ -63,7 +66,7 @@ function App() {
   }, [])
 
   const navigate = (next: View) => {
-    window.location.hash = next === "keys" ? "keys" : ""
+    window.location.hash = next === "dashboard" ? "" : next
     setView(next)
   }
 
@@ -94,8 +97,8 @@ function App() {
             </div>
           </div>
 
-          <nav className="hidden items-center gap-1 rounded-lg border border-border/60 bg-background/30 p-1 md:flex">
-            {(["dashboard", "keys"] as const).map((item) => (
+          <nav className="hidden items-center gap-1 rounded-lg border border-border/60 bg-background/30 p-1 lg:flex">
+            {(["dashboard", "keys", "models"] as const).map((item) => (
               <button
                 key={item}
                 type="button"
@@ -107,7 +110,7 @@ function App() {
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                {item === "dashboard" ? "Overview" : "API keys"}
+                {item === "dashboard" ? "Overview" : item === "keys" ? "API keys" : "Models"}
               </button>
             ))}
           </nav>
@@ -139,6 +142,15 @@ function App() {
             <Button
               variant="outline"
               size="sm"
+              aria-label="Models"
+              className="h-8 border-border/70 bg-background/30 px-2 lg:hidden"
+              onClick={() => navigate("models")}
+            >
+              <Boxes />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               aria-label="Refresh dashboard"
               className="h-8 border-border/70 bg-background/30"
               onClick={() => void refresh()}
@@ -161,6 +173,11 @@ function App() {
         <main className="flex-1 space-y-5">
           {view === "keys" ? (
             <KeysPage onBack={() => navigate("dashboard")} />
+          ) : view === "models" ? (
+            <ModelsPage
+              enabled={status.data?.keyConfigured === true}
+              onManageKeys={() => navigate("keys")}
+            />
           ) : (
             <>
           <section className="animate-rise flex flex-col justify-between gap-5 pt-2 pb-1 lg:flex-row lg:items-end">
@@ -265,7 +282,10 @@ function App() {
 
           <UsagePanel snapshot={usage.data} pending={usage.isPending} />
 
-          <ModelsPanel enabled={status.data?.keyConfigured === true} />
+          <ModelsPanel
+            enabled={status.data?.keyConfigured === true}
+            onViewAll={() => navigate("models")}
+          />
 
           <RecentRequests snapshot={usage.data} />
             </>
