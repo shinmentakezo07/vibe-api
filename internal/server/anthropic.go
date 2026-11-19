@@ -109,12 +109,18 @@ func upstreamMessage(body []byte) string {
 			Msg string `json:"msg"`
 		} `json:"detail"`
 		Message string `json:"message"`
+		Error   struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return ""
 	}
 	if payload.Message != "" {
 		return payload.Message
+	}
+	if payload.Error.Message != "" {
+		return payload.Error.Message
 	}
 	if len(payload.Detail) > 0 {
 		return payload.Detail[0].Msg
@@ -153,6 +159,14 @@ func streamAnthropic(w gin.ResponseWriter, src io.Reader, stream *translator.Ant
 				writeAnthropicEvents(w, stream.Finish())
 				return
 			}
+			if message := upstreamMessage([]byte(data)); message != "" && looksLikeError([]byte(data)) {
+				s.log.Error("upstream stream error", "message", message)
+				writeAnthropicEvents(w, []translator.Event{{
+					Name: "error",
+					Data: anthropicError("api_error", message),
+				}})
+				return
+			}
 			onData([]byte(data))
 			writeAnthropicEvents(w, stream.Feed(translator.Chunk([]byte(data))))
 		}
@@ -164,6 +178,19 @@ func streamAnthropic(w gin.ResponseWriter, src io.Reader, stream *translator.Ant
 			return
 		}
 	}
+}
+
+// looksLikeError reports whether a streamed data frame is an upstream error
+// payload rather than a completion chunk.
+func looksLikeError(data []byte) bool {
+	var frame struct {
+		Error   json.RawMessage `json:"error"`
+		Choices json.RawMessage `json:"choices"`
+	}
+	if err := json.Unmarshal(data, &frame); err != nil {
+		return false
+	}
+	return len(frame.Error) > 0 && string(frame.Error) != "null" && len(frame.Choices) == 0
 }
 
 // sseData extracts the payload of a `data:` line.
