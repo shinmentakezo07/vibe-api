@@ -10,6 +10,23 @@ export type Status = {
   storage: "postgres" | "memory"
 }
 
+export type KeyStats = {
+  requests: number
+  errors: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  lastUsed?: string
+}
+
+export type KeyError = {
+  time: string
+  route: string
+  model: string
+  status?: number
+  message: string
+}
+
 export type APIKey = {
   id: string
   label: string
@@ -17,6 +34,8 @@ export type APIKey = {
   enabled: boolean
   createdAt: string
   source: "database" | "environment" | "memory"
+  stats: KeyStats
+  errors: KeyError[]
 }
 
 export type KeyList = {

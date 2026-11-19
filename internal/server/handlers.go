@@ -103,13 +103,14 @@ func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool, route, 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
 		s.log.Error("upstream error", "status", resp.StatusCode, "body", string(body))
+		s.recordKeyError(c, route, model, resp.StatusCode, upstreamErrorMessage(body))
 		_, _ = c.Writer.Write(body)
 		return
 	}
 
 	if stream {
 		streamSSE(c.Writer, resp.Body, s.log, func(data []byte) {
-			s.track(route, model, data, true, time.Since(started))
+			s.track(c, route, model, data, true, time.Since(started))
 		})
 		return
 	}
@@ -122,7 +123,7 @@ func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool, route, 
 		return
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		s.track(route, model, body, false, time.Since(started))
+		s.track(c, route, model, body, false, time.Since(started))
 		if rewritten, rerr := translator.Response(body); rerr == nil {
 			body = rewritten
 		}
@@ -132,14 +133,18 @@ func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool, route, 
 	}
 }
 
-// track records token usage from an upstream JSON payload.
-func (s *Server) track(route, model string, data []byte, stream bool, latency time.Duration) {
+// track records token usage from an upstream JSON payload, attributed to the
+// key selected for this request.
+func (s *Server) track(c *gin.Context, route, model string, data []byte, stream bool, latency time.Duration) {
 	reported, tokens := usage.FromMessage(data)
 	if !tokens.OK {
 		return
 	}
 	if reported != "" {
 		model = reported
+	}
+	if id, ok := c.Get(selectedKeyID); ok {
+		s.keys.RecordUsage(id.(string), tokens.Prompt, tokens.Completion, tokens.Total)
 	}
 	record, ok := s.tracker.Add(usage.Sample{
 		Route:      route,
@@ -162,6 +167,33 @@ func (s *Server) track(route, model string, data []byte, stream bool, latency ti
 	}
 }
 
+// upstreamErrorMessage extracts the human-readable message from an upstream
+// error body so dashboard key events stay legible.
+func upstreamErrorMessage(body []byte) string {
+	var payload struct {
+		Message string `json:"message"`
+		Detail  []struct {
+			Msg string `json:"msg"`
+		} `json:"detail"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return ""
+	}
+	if payload.Message != "" {
+		return payload.Message
+	}
+	if payload.Error != nil && payload.Error.Message != "" {
+		return payload.Error.Message
+	}
+	if len(payload.Detail) > 0 {
+		return payload.Detail[0].Msg
+	}
+	return ""
+}
+
 // upstreamError reports a failed upstream call, except when the caller is gone.
 func (s *Server) upstreamError(c *gin.Context, err error) {
 	if c.Request.Context().Err() != nil {
@@ -171,6 +203,7 @@ func (s *Server) upstreamError(c *gin.Context, err error) {
 		c.JSON(http.StatusUnauthorized, openai.NewError("Mistral API key is not configured", "authentication_error"))
 		return
 	}
+	s.recordKeyError(c, c.FullPath(), "", 0, err.Error())
 	c.JSON(http.StatusBadGateway, openai.NewError("upstream request failed: "+err.Error(), "api_error"))
 }
 

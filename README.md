@@ -37,7 +37,7 @@ npm --prefix web run dev    # terminal 2 → http://localhost:5173
 
 ### Web dashboard
 
-- **API keys** — a dedicated page at `/#keys` adds, enables, disables, and deletes multiple Mistral keys. New keys are validated before joining the pool. Optional round-robin rotates each request across enabled keys; when disabled, the first enabled key is used. Secrets are never returned, only masked hints.
+- **API keys** — a dedicated page at `/#keys` adds, enables, disables, and deletes multiple Mistral keys. New keys are validated before joining the pool. Optional round-robin rotates each request across enabled keys; when disabled, the first enabled key is used. Each key shows its own request count, token usage, last-used time, and its most recent upstream errors (status, route, model, and message), so it is obvious which key is absorbing traffic or failing. Secrets are never returned, only masked hints.
 - **Models** — a dedicated page at `/#models` lists the full `GET /v1/models` catalog with search, capability filters, context windows, copyable ids, and live counts for tool calling, vision, and reasoning.
 - **Usage** — the Overview page polls `/api/usage` every 3 seconds and shows total, cached, and reasoning tokens plus average per-request output TPS; rolling TPM/TPS, cache-hit, and reasoning-share gauges with a 60-second pulse; output throughput over the last 20 minutes; a p50/p95 latency distribution; and a request log with per-call token, cache, reasoning, latency, and output-TPS accounting. Prompt/completion/cached/reasoning usage is captured for OpenAI and Anthropic requests, streaming included.
 - **Admin API** — `GET /api/status`, `GET /api/keys`, `POST /api/keys`

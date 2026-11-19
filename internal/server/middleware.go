@@ -28,8 +28,20 @@ func (s *Server) requireAPIKey(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, openai.NewError("Mistral API key is not configured", "authentication_error"))
 		return
 	}
-	c.Request = c.Request.WithContext(mistral.WithAPIKey(c.Request.Context(), key))
+	c.Request = c.Request.WithContext(mistral.WithAPIKey(c.Request.Context(), key.Secret))
+	c.Set(selectedKeyID, key.ID)
 	c.Next()
+}
+
+// selectedKeyID is the gin context key holding the credential chosen for this
+// request, used to attribute usage and errors back to a pool entry.
+const selectedKeyID = "selected_key_id"
+
+// recordKeyError attributes an upstream failure to the key that served it.
+func (s *Server) recordKeyError(c *gin.Context, route, model string, status int, message string) {
+	if id, ok := c.Get(selectedKeyID); ok {
+		s.keys.RecordError(id.(string), route, model, status, message)
+	}
 }
 
 // cors allows browser-based OpenAI clients to call the proxy directly.

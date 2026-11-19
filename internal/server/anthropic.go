@@ -68,7 +68,7 @@ func (s *Server) anthropicMessages(c *gin.Context) {
 		c.Header("X-Accel-Buffering", "no")
 		c.Status(resp.StatusCode)
 		streamAnthropic(c.Writer, resp.Body, translator.NewAnthropicStream(model, ""), s, func(data []byte) {
-			s.track("/v1/messages", model, data, true, time.Since(started))
+			s.track(c, "/v1/messages", model, data, true, time.Since(started))
 		})
 		return
 	}
@@ -80,7 +80,7 @@ func (s *Server) anthropicMessages(c *gin.Context) {
 		}
 		return
 	}
-	s.track("/v1/messages", model, body, false, time.Since(started))
+	s.track(c, "/v1/messages", model, body, false, time.Since(started))
 	translated, err := translator.AnthropicResponse(body)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, anthropicError("api_error", err.Error()))
@@ -100,6 +100,7 @@ func (s *Server) relayAnthropicError(c *gin.Context, resp *http.Response) {
 	if message == "" {
 		message = http.StatusText(resp.StatusCode)
 	}
+	s.recordKeyError(c, "/v1/messages", "", resp.StatusCode, message)
 	c.JSON(resp.StatusCode, anthropicError(anthropicErrorKind(resp.StatusCode), message))
 }
 

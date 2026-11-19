@@ -30,6 +30,36 @@ type View struct {
 	Enabled   bool      `json:"enabled"`
 	CreatedAt time.Time `json:"createdAt"`
 	Source    string    `json:"source"`
+	Stats     Stats     `json:"stats"`
+	Errors    []Event   `json:"errors"`
+}
+
+// Stats is the traffic attributed to one key since startup.
+type Stats struct {
+	Requests   int        `json:"requests"`
+	Errors     int        `json:"errors"`
+	Prompt     int        `json:"promptTokens"`
+	Completion int        `json:"completionTokens"`
+	Total      int        `json:"totalTokens"`
+	LastUsed   *time.Time `json:"lastUsed,omitempty"`
+}
+
+// Event is one upstream failure attributed to a key.
+type Event struct {
+	Time    time.Time `json:"time"`
+	Route   string    `json:"route"`
+	Model   string    `json:"model"`
+	Status  int       `json:"status,omitempty"`
+	Message string    `json:"message"`
+}
+
+// maxKeyErrors caps the remembered error events per key.
+const maxKeyErrors = 10
+
+// keyStats mutates under the manager lock.
+type keyStats struct {
+	Stats
+	errors []Event
 }
 
 // Manager is a concurrency-safe pool of API keys.
@@ -38,11 +68,12 @@ type Manager struct {
 	keys       []Key
 	next       int
 	roundRobin bool
+	stats      map[string]*keyStats
 }
 
 // New builds a pool from persisted keys.
 func New(initial []Key, roundRobin bool) *Manager {
-	return &Manager{keys: initial, roundRobin: roundRobin}
+	return &Manager{keys: initial, roundRobin: roundRobin, stats: make(map[string]*keyStats)}
 }
 
 // Hint masks a key for display.
@@ -51,6 +82,50 @@ func Hint(secret string) string {
 		return "••••"
 	}
 	return "••••" + secret[len(secret)-4:]
+}
+
+// RecordUsage attributes one relayed completion to a key.
+func (m *Manager) RecordUsage(id string, prompt, completion, total int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stats := m.stats[id]
+	if stats == nil {
+		return
+	}
+	stats.Requests++
+	stats.Prompt += prompt
+	stats.Completion += completion
+	stats.Total += total
+	now := time.Now()
+	stats.LastUsed = &now
+}
+
+// RecordError attributes one upstream failure to a key. A status of 0 means
+// the upstream call failed before a response arrived.
+func (m *Manager) RecordError(id, route, model string, status int, message string) {
+	if message == "" {
+		message = "upstream request failed"
+	}
+	if len(message) > 300 {
+		message = message[:300]
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stats := m.stats[id]
+	if stats == nil {
+		return
+	}
+	stats.Errors++
+	stats.errors = append(stats.errors, Event{
+		Time:    time.Now(),
+		Route:   route,
+		Model:   model,
+		Status:  status,
+		Message: message,
+	})
+	if len(stats.errors) > maxKeyErrors {
+		stats.errors = stats.errors[len(stats.errors)-maxKeyErrors:]
+	}
 }
 
 // NewID returns an id for an in-memory key.
@@ -134,14 +209,20 @@ func (m *Manager) Views() []View {
 	defer m.mu.Unlock()
 	views := make([]View, 0, len(m.keys))
 	for _, key := range m.keys {
-		views = append(views, View{
+		view := View{
 			ID:        key.ID,
 			Label:     key.Label,
 			Hint:      Hint(key.Secret),
 			Enabled:   key.Enabled,
 			CreatedAt: key.CreatedAt,
 			Source:    key.Source,
-		})
+			Errors:    []Event{},
+		}
+		if stats := m.stats[key.ID]; stats != nil {
+			view.Stats = stats.Stats
+			view.Errors = append(view.Errors, stats.errors...)
+		}
+		views = append(views, view)
 	}
 	return views
 }
@@ -194,23 +275,26 @@ func (m *Manager) RoundRobin() bool {
 
 // Pick returns the next credential. Rotation only advances when round-robin
 // is enabled; otherwise every request uses the first enabled key.
-func (m *Manager) Pick() (string, error) {
+func (m *Manager) Pick() (Key, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	enabled := make([]string, 0, len(m.keys))
+	enabled := make([]Key, 0, len(m.keys))
 	for _, key := range m.keys {
 		if key.Enabled {
-			enabled = append(enabled, key.Secret)
+			enabled = append(enabled, key)
 		}
 	}
 	if len(enabled) == 0 {
-		return "", ErrNoKeys
+		return Key{}, ErrNoKeys
 	}
-	if !m.roundRobin {
-		return enabled[0], nil
+	selected := enabled[0]
+	if m.roundRobin {
+		selected = enabled[m.next%len(enabled)]
+		m.next = (m.next + 1) % len(enabled)
 	}
-	selected := enabled[m.next%len(enabled)]
-	m.next = (m.next + 1) % len(enabled)
+	if _, ok := m.stats[selected.ID]; !ok {
+		m.stats[selected.ID] = &keyStats{}
+	}
 	return selected, nil
 }

@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
+  AlertTriangle,
   Database,
   Eye,
   EyeOff,
@@ -13,7 +14,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
-import { api, type KeyList } from "@/lib/api"
+import { api, compactNumber, timeAgo, type KeyList } from "@/lib/api"
 import { cn } from "cn"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -72,6 +73,7 @@ export function KeysPage({ onBack }: Props) {
   const [secret, setSecret] = useState("")
   const [visible, setVisible] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [openErrors, setOpenErrors] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
 
   const keys = useQuery({
@@ -329,6 +331,43 @@ export function KeysPage({ onBack }: Props) {
                         ) : null}
                       </div>
                       <p className="mt-1 font-mono text-xs text-muted-foreground">{key.hint}</p>
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        {key.stats.requests > 0 || key.stats.errors > 0 ? (
+                          <>
+                            {compactNumber(key.stats.requests)} requests ·{" "}
+                            {compactNumber(key.stats.totalTokens)} tokens
+                            {key.stats.lastUsed ? ` · last used ${timeAgo(key.stats.lastUsed)}` : ""}
+                          </>
+                        ) : (
+                          "No traffic yet"
+                        )}
+                        {key.stats.errors > 0 ? (
+                          <button
+                            type="button"
+                            className="ml-2 inline-flex items-center gap-1 text-red-300 transition-colors hover:text-red-200"
+                            onClick={() => setOpenErrors(openErrors === key.id ? null : key.id)}
+                          >
+                            <AlertTriangle className="size-3" />
+                            {key.stats.errors} error{key.stats.errors === 1 ? "" : "s"}
+                            {openErrors === key.id ? " (hide)" : " (show)"}
+                          </button>
+                        ) : null}
+                      </p>
+                      {openErrors === key.id && key.errors.length > 0 ? (
+                        <ul className="mt-2 space-y-1.5">
+                          {key.errors.slice().reverse().map((err, index) => (
+                            <li
+                              key={index}
+                              className="rounded-lg border border-destructive/20 bg-destructive/5 px-2.5 py-1.5 font-mono text-[10px] leading-relaxed text-red-300/90"
+                            >
+                              <span className="text-muted-foreground">{timeAgo(err.time)}</span>{" "}
+                              {err.status ? <span className="text-red-300">HTTP {err.status}</span> : null}{" "}
+                              {err.route}
+                              {err.model ? ` · ${err.model}` : ""} — {err.message}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
                     </div>
                   </div>
 
