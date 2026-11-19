@@ -8,18 +8,20 @@ import (
 
 	"vibe-api/internal/config"
 	"vibe-api/internal/mistral"
+	"vibe-api/internal/usage"
 )
 
 // Server holds the dependencies shared by every handler.
 type Server struct {
 	cfg      config.Config
 	upstream *mistral.Client
+	tracker  *usage.Tracker
 	log      *slog.Logger
 }
 
 // New builds a Server.
 func New(cfg config.Config, upstream *mistral.Client, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, upstream: upstream, log: log}
+	return &Server{cfg: cfg, upstream: upstream, tracker: usage.New(), log: log}
 }
 
 // Router returns the fully configured Gin engine.
@@ -31,6 +33,15 @@ func (s *Server) Router() *gin.Engine {
 
 	r.GET("/healthz", s.health)
 
+	api := r.Group("/api")
+	if s.cfg.ProxyKey != "" {
+		api.Use(s.requireKey)
+	}
+	api.GET("/status", s.status)
+	api.POST("/key", s.setKey)
+	api.DELETE("/key", s.clearKey)
+	api.GET("/usage", s.usageSnapshot)
+
 	v1 := r.Group("/v1")
 	if s.cfg.ProxyKey != "" {
 		v1.Use(s.requireKey)
@@ -39,6 +50,8 @@ func (s *Server) Router() *gin.Engine {
 	v1.GET("/models/:id", s.getModel)
 	v1.POST("/chat/completions", s.chatCompletions)
 	v1.POST("/messages", s.anthropicMessages)
+
+	r.NoRoute(s.serveUI)
 
 	return r
 }

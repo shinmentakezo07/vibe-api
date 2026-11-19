@@ -4,3 +4,7 @@
 
 # Environment
 .env
+
+# Web UI
+web/node_modules
+web/dist

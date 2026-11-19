@@ -4,20 +4,28 @@ package mistral
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
-// Client sends authenticated requests to one Mistral API origin.
+// ErrMissingKey means no upstream credential is configured.
+var ErrMissingKey = errors.New("Mistral API key is not configured")
+
+// Client sends authenticated requests to one Mistral API origin. The key can
+// be replaced at runtime from the web UI.
 type Client struct {
 	baseURL   string
-	apiKey    string
 	userAgent string
 	http      *http.Client
+
+	mu     sync.RWMutex
+	apiKey string
 }
 
 // New builds a client with connection reuse and streaming-friendly timeouts.
@@ -69,6 +77,59 @@ func (c *Client) get(ctx context.Context, path string, inbound http.Header) (*ht
 	})
 }
 
+// SetAPIKey replaces the upstream credential for subsequent requests.
+func (c *Client) SetAPIKey(key string) {
+	c.mu.Lock()
+	c.apiKey = strings.TrimSpace(key)
+	c.mu.Unlock()
+}
+
+// HasAPIKey reports whether an upstream credential is configured.
+func (c *Client) HasAPIKey() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.apiKey != ""
+}
+
+// KeyHint returns a masked form of the configured key for display.
+func (c *Client) KeyHint() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.apiKey == "" {
+		return ""
+	}
+	if len(c.apiKey) <= 4 {
+		return "••••"
+	}
+	return "••••" + c.apiKey[len(c.apiKey)-4:]
+}
+
+// ValidateKey checks a candidate key with a models request before it is saved.
+func (c *Client) ValidateKey(ctx context.Context, key string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/models", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(key))
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("validate key: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return errors.New("Mistral rejected the API key")
+	}
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("Mistral returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+	return nil
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body io.Reader, inbound http.Header, overrides map[string]string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
@@ -82,7 +143,14 @@ func (c *Client) do(ctx context.Context, method, path string, body io.Reader, in
 	if req.Header.Get("User-Agent") == "" {
 		req.Header.Set("User-Agent", c.userAgent)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	c.mu.RLock()
+	key := c.apiKey
+	c.mu.RUnlock()
+	if key == "" {
+		return nil, ErrMissingKey
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
 
 	resp, err := c.http.Do(req)
 	if err != nil {

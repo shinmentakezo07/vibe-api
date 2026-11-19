@@ -10,8 +10,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"vibe-api/internal/mistral"
 	"vibe-api/internal/openai"
 	"vibe-api/internal/translator"
+	"vibe-api/internal/usage"
 )
 
 const maxBodyBytes = 32 << 20 // images inlined as data URIs
@@ -38,7 +40,8 @@ func (s *Server) chatCompletions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, openai.NewError("invalid JSON: "+err.Error(), "invalid_request_error"))
 		return
 	}
-	if model, _ := payload["model"].(string); model == "" {
+	model, _ := payload["model"].(string)
+	if model == "" {
 		c.JSON(http.StatusBadRequest, openai.NewError("model is required", "invalid_request_error"))
 		return
 	}
@@ -63,7 +66,7 @@ func (s *Server) chatCompletions(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
-	s.relay(c, resp, stream)
+	s.relay(c, resp, stream, "/v1/chat/completions", model)
 }
 
 func (s *Server) listModels(c *gin.Context) {
@@ -73,7 +76,7 @@ func (s *Server) listModels(c *gin.Context) {
 		return
 	}
 	defer resp.Body.Close()
-	s.relay(c, resp, false)
+	s.relay(c, resp, false, "/v1/models", "")
 }
 
 func (s *Server) getModel(c *gin.Context) {
@@ -83,11 +86,11 @@ func (s *Server) getModel(c *gin.Context) {
 		return
 	}
 	defer resp.Body.Close()
-	s.relay(c, resp, false)
+	s.relay(c, resp, false, "/v1/models", "")
 }
 
 // relay copies the upstream status, selected headers, and body to the caller.
-func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool) {
+func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool, route, model string) {
 	copyResponseHeaders(c.Writer.Header(), resp.Header)
 	if stream {
 		c.Header("Cache-Control", "no-cache")
@@ -103,7 +106,9 @@ func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool) {
 	}
 
 	if stream {
-		streamSSE(c.Writer, resp.Body, s.log)
+		streamSSE(c.Writer, resp.Body, s.log, func(data []byte) {
+			s.track(route, model, data, true)
+		})
 		return
 	}
 
@@ -115,6 +120,7 @@ func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool) {
 		return
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		s.track(route, model, body, false)
 		if rewritten, rerr := translator.Response(body); rerr == nil {
 			body = rewritten
 		}
@@ -124,9 +130,25 @@ func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool) {
 	}
 }
 
+// track records token usage from an upstream JSON payload.
+func (s *Server) track(route, model string, data []byte, stream bool) {
+	reported, tokens := usage.FromMessage(data)
+	if !tokens.OK {
+		return
+	}
+	if reported != "" {
+		model = reported
+	}
+	s.tracker.Add(route, model, tokens.Prompt, tokens.Completion, tokens.Total, tokens.Cached, stream)
+}
+
 // upstreamError reports a failed upstream call, except when the caller is gone.
 func (s *Server) upstreamError(c *gin.Context, err error) {
 	if c.Request.Context().Err() != nil {
+		return
+	}
+	if errors.Is(err, mistral.ErrMissingKey) {
+		c.JSON(http.StatusUnauthorized, openai.NewError("Mistral API key is not configured", "authentication_error"))
 		return
 	}
 	c.JSON(http.StatusBadGateway, openai.NewError("upstream request failed: "+err.Error(), "api_error"))

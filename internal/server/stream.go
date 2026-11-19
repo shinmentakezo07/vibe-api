@@ -14,10 +14,13 @@ import (
 
 // streamSSE forwards Server-Sent Events line by line and rewrites Mistral
 // chunk payloads into OpenAI shape as they pass through.
-func streamSSE(w gin.ResponseWriter, src io.Reader, log *slog.Logger) {
+func streamSSE(w gin.ResponseWriter, src io.Reader, log *slog.Logger, onData func([]byte)) {
 	reader := bufio.NewReader(src)
 	for {
 		line, err := reader.ReadString('\n')
+		if data, ok := sseData(line); ok && data != "[DONE]" {
+			onData([]byte(data))
+		}
 		if line != "" {
 			if _, werr := w.Write(rewriteSSELine(line)); werr != nil {
 				return

@@ -65,7 +65,9 @@ func (s *Server) anthropicMessages(c *gin.Context) {
 		c.Header("Cache-Control", "no-cache")
 		c.Header("X-Accel-Buffering", "no")
 		c.Status(resp.StatusCode)
-		streamAnthropic(c.Writer, resp.Body, translator.NewAnthropicStream(model, ""), s)
+		streamAnthropic(c.Writer, resp.Body, translator.NewAnthropicStream(model, ""), s, func(data []byte) {
+			s.track("/v1/messages", model, data, true)
+		})
 		return
 	}
 
@@ -76,6 +78,7 @@ func (s *Server) anthropicMessages(c *gin.Context) {
 		}
 		return
 	}
+	s.track("/v1/messages", model, body, false)
 	translated, err := translator.AnthropicResponse(body)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, anthropicError("api_error", err.Error()))
@@ -137,7 +140,7 @@ func anthropicError(kind, message string) gin.H {
 }
 
 // streamAnthropic relays Mistral chunks as Anthropic Messages SSE events.
-func streamAnthropic(w gin.ResponseWriter, src io.Reader, stream *translator.AnthropicStream, s *Server) {
+func streamAnthropic(w gin.ResponseWriter, src io.Reader, stream *translator.AnthropicStream, s *Server, onData func([]byte)) {
 	writeAnthropicEvents(w, stream.Start())
 
 	reader := bufio.NewReader(src)
@@ -148,6 +151,7 @@ func streamAnthropic(w gin.ResponseWriter, src io.Reader, stream *translator.Ant
 				writeAnthropicEvents(w, stream.Finish())
 				return
 			}
+			onData([]byte(data))
 			writeAnthropicEvents(w, stream.Feed(translator.Chunk([]byte(data))))
 		}
 		if err != nil {

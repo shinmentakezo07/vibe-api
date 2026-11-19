@@ -25,7 +25,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	handler := server.New(cfg, mistral.New(cfg.APIKey, cfg.BaseURL, cfg.UserAgent), log).Router()
+	upstream := mistral.New(cfg.APIKey, cfg.BaseURL, cfg.UserAgent)
+	if !upstream.HasAPIKey() {
+		log.Warn("no upstream API key configured; add one from the dashboard")
+	}
+	handler := server.New(cfg, upstream, log).Router()
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
