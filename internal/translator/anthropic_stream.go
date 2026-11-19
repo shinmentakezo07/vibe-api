@@ -25,8 +25,11 @@ type AnthropicStream struct {
 }
 
 type contentBlock struct {
-	index int
+	index int    // -1 until the block has a content_block_start event
 	kind  string // text, thinking, tool_use
+	id    any    // tool_use fields that may arrive after the first fragment
+	name  any
+	args  string // argument fragments buffered before the block can start
 }
 
 // NewAnthropicStream starts a stream for one message.
@@ -90,23 +93,64 @@ func (s *AnthropicStream) Feed(data []byte) []Event {
 		for i, raw := range calls {
 			call, _ := raw.(map[string]any)
 			index := toolCallIndex(call, i)
-			block := s.tools[index]
-			if block == nil {
-				events = append(events, s.startToolBlock(index, call)...)
-				block = s.tools[index]
-			}
-			if block == nil {
-				continue
-			}
 			function, _ := call["function"].(map[string]any)
-			if arguments, _ := function["arguments"].(string); arguments != "" {
-				events = append(events, s.deltaAt(block.index, "input_json_delta", map[string]any{
-					"partial_json": arguments,
-				})...)
-			}
+			arguments, _ := function["arguments"].(string)
+			events = append(events, s.toolCall(index, call, function, arguments)...)
 		}
 	}
 	return events
+}
+
+// toolCall opens the tool_use block for a call index on its first delta and
+// forwards argument fragments. Fragments that arrive before the id/name do
+// not start the block: content_block_start must carry both, so the pending
+// fragments are buffered and flushed once the block can open.
+func (s *AnthropicStream) toolCall(index int, call, function map[string]any, arguments string) []Event {
+	block := s.tools[index]
+	if block == nil {
+		block = &contentBlock{index: -1, kind: "tool_use"}
+		s.tools[index] = block
+	}
+	block.id = firstNonNil(call["id"], block.id)
+	block.name = firstNonNil(function["name"], block.name)
+	if arguments != "" {
+		block.args += arguments
+	}
+
+	if block.index < 0 {
+		// Not started yet: flush when id and name are both known.
+		if block.id == nil || block.name == nil {
+			return nil
+		}
+		events := s.closeTextBlock()
+		block.index = s.next
+		s.next++
+		events = append(events, Event{Name: "content_block_start", Data: map[string]any{
+			"type":  "content_block_start",
+			"index": block.index,
+			"content_block": map[string]any{
+				"type":  "tool_use",
+				"id":    block.id,
+				"name":  block.name,
+				"input": map[string]any{},
+			},
+		}})
+		events = append(events, s.flushArgs(block)...)
+		return events
+	}
+	return s.flushArgs(block)
+}
+
+// flushArgs emits the buffered argument fragments as one input_json_delta.
+func (s *AnthropicStream) flushArgs(block *contentBlock) []Event {
+	if block.args == "" {
+		return nil
+	}
+	partial := block.args
+	block.args = ""
+	return s.deltaAt(block.index, "input_json_delta", map[string]any{
+		"partial_json": partial,
+	})
 }
 
 // Finish emits the closing block events and message_delta/message_stop once.
@@ -162,26 +206,6 @@ func (s *AnthropicStream) startBlock(kind string) []Event {
 	}})
 }
 
-// startToolBlock opens one tool_use block per tool-call index. It closes the
-// active text block but leaves other tool blocks open.
-func (s *AnthropicStream) startToolBlock(index int, call map[string]any) []Event {
-	events := s.closeTextBlock()
-
-	function, _ := call["function"].(map[string]any)
-	block := &contentBlock{index: s.next, kind: "tool_use"}
-	s.next++
-	s.tools[index] = block
-	return append(events, Event{Name: "content_block_start", Data: map[string]any{
-		"type":  "content_block_start",
-		"index": block.index,
-		"content_block": map[string]any{
-			"type":  "tool_use",
-			"id":    call["id"],
-			"name":  function["name"],
-			"input": map[string]any{},
-		},
-	}})
-}
 
 func (s *AnthropicStream) deltaAt(index int, kind string, delta map[string]any) []Event {
 	delta["type"] = kind
@@ -211,6 +235,9 @@ func (s *AnthropicStream) closeAllBlocks() []Event {
 		s.open = nil
 	}
 	for _, block := range s.tools {
+		if block.index < 0 {
+			continue // block never got a content_block_start on the wire
+		}
 		blocks = append(blocks, block)
 	}
 	s.tools = map[int]*contentBlock{}
@@ -223,6 +250,17 @@ func (s *AnthropicStream) closeAllBlocks() []Event {
 		}})
 	}
 	return events
+}
+
+// firstNonNil returns the first value that is present and non-empty, so a
+// tool_use block can start before its name/id fragment arrives.
+func firstNonNil(values ...any) any {
+	for _, value := range values {
+		if value != nil && value != "" {
+			return value
+		}
+	}
+	return nil
 }
 
 func toolCallIndex(call map[string]any, fallback int) int {

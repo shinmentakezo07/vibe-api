@@ -5,7 +5,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 )
+
+// callSeq makes generated call ids unique even when two calls share a name
+// and arguments.
+var callSeq atomic.Uint64
+
+func nextCallSeq() uint64 { return callSeq.Add(1) }
 
 // translateTools maps the optional legacy OpenAI function-calling surface onto
 // tools/tool_calls and makes every tool call wire-safe for Mistral.
@@ -160,6 +167,6 @@ func normalizeToolCalls(message map[string]any, stream bool) bool {
 // callID derives a stable id so a legacy function result can be matched back
 // to the call that produced it.
 func callID(function map[string]any) string {
-	sum := sha1.Sum([]byte(fmt.Sprint(function["name"], function["arguments"])))
+	sum := sha1.Sum([]byte(fmt.Sprint(function["name"], function["arguments"], nextCallSeq())))
 	return "call_" + hex.EncodeToString(sum[:4])
 }
