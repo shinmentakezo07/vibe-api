@@ -206,7 +206,6 @@ func (s *AnthropicStream) startBlock(kind string) []Event {
 	}})
 }
 
-
 func (s *AnthropicStream) deltaAt(index int, kind string, delta map[string]any) []Event {
 	delta["type"] = kind
 	return []Event{{Name: "content_block_delta", Data: map[string]any{
