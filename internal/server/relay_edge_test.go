@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"vibe-api/internal/usage"
 )
 
 func relayOnce(t *testing.T, handler http.HandlerFunc) *httptest.ResponseRecorder {
