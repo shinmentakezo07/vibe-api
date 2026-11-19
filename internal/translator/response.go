@@ -1,35 +1,45 @@
-package openai
+package translator
 
 import "encoding/json"
 
-// RewriteCompletion turns a Mistral chat completion into OpenAI shape: the
-// reasoning blocks Mistral returns inside `content` become a string `content`
-// plus an optional `reasoning_content`.
-func RewriteCompletion(body []byte) ([]byte, error) {
+// Response turns a Mistral chat completion into OpenAI shape: the reasoning
+// blocks Mistral returns inside `content` become a string `content` plus an
+// optional `reasoning_content`, and tool calls get OpenAI-safe fields.
+func Response(body []byte) ([]byte, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
+
 	choices, _ := payload["choices"].([]any)
 	for _, raw := range choices {
 		choice, ok := raw.(map[string]any)
 		if !ok {
 			continue
 		}
-		if message, ok := choice["message"].(map[string]any); ok {
-			rewriteMessage(message)
+		message, ok := choice["message"].(map[string]any)
+		if !ok {
+			continue
+		}
+		rewriteMessage(message)
+		normalizeToolCalls(message, false)
+		if len(toolCalls(message)) > 0 {
+			if reason, _ := choice["finish_reason"].(string); reason == "" {
+				choice["finish_reason"] = "tool_calls"
+			}
 		}
 	}
 	return json.Marshal(payload)
 }
 
-// RewriteChunk turns one streamed Mistral `chat.completion.chunk` into OpenAI
-// shape. It returns the input unchanged when it is not a JSON object.
-func RewriteChunk(data []byte) []byte {
+// Chunk turns one streamed Mistral `chat.completion.chunk` into OpenAI shape.
+// It returns the input unchanged when nothing needed changing.
+func Chunk(data []byte) []byte {
 	var payload map[string]any
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return data
 	}
+
 	choices, _ := payload["choices"].([]any)
 	changed := false
 	for _, raw := range choices {
@@ -37,10 +47,15 @@ func RewriteChunk(data []byte) []byte {
 		if !ok {
 			continue
 		}
-		if delta, ok := choice["delta"].(map[string]any); ok {
-			if rewriteMessage(delta) {
-				changed = true
-			}
+		delta, ok := choice["delta"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if rewriteMessage(delta) {
+			changed = true
+		}
+		if normalizeToolCalls(delta, true) {
+			changed = true
 		}
 	}
 	if !changed {

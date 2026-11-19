@@ -38,6 +38,7 @@ func (s *Server) Router() *gin.Engine {
 	v1.GET("/models", s.listModels)
 	v1.GET("/models/:id", s.getModel)
 	v1.POST("/chat/completions", s.chatCompletions)
+	v1.POST("/messages", s.anthropicMessages)
 
 	return r
 }

@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"vibe-api/internal/openai"
+	"vibe-api/internal/translator"
 )
 
 // streamSSE forwards Server-Sent Events line by line and rewrites Mistral
@@ -42,7 +42,7 @@ func rewriteSSELine(line string) []byte {
 	if data == "" || data == "[DONE]" {
 		return []byte(line)
 	}
-	rewritten := openai.RewriteChunk([]byte(data))
+	rewritten := translator.Chunk([]byte(data))
 	if string(rewritten) == data {
 		return []byte(line)
 	}

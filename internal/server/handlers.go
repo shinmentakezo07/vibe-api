@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"vibe-api/internal/openai"
+	"vibe-api/internal/translator"
 )
 
 const maxBodyBytes = 32 << 20 // images inlined as data URIs
@@ -47,7 +48,7 @@ func (s *Server) chatCompletions(c *gin.Context) {
 		s.log.Info("request headers", "headers", c.Request.Header)
 		s.log.Info("request body", "body", string(body))
 	}
-	openai.Normalize(payload)
+	translator.Request(payload)
 
 	body, err = json.Marshal(payload)
 	if err != nil {
@@ -114,7 +115,7 @@ func (s *Server) relay(c *gin.Context, resp *http.Response, stream bool) {
 		return
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		if rewritten, rerr := openai.RewriteCompletion(body); rerr == nil {
+		if rewritten, rerr := translator.Response(body); rerr == nil {
 			body = rewritten
 		}
 	}

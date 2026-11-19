@@ -17,6 +17,8 @@ type Config struct {
 	ProxyKey string
 	// ListenAddr is the address the HTTP server binds to.
 	ListenAddr string
+	// AnthropicModel replaces Claude model names sent to the Anthropic route.
+	AnthropicModel string
 	// UserAgent is sent upstream when the caller does not supply one.
 	UserAgent string
 	// Debug logs request bodies and upstream error payloads.
@@ -31,12 +33,13 @@ type Config struct {
 //	LISTEN_ADDR      bind address (default :8080)
 func Load() (Config, error) {
 	cfg := Config{
-		APIKey:     os.Getenv("MISTRAL_API_KEY"),
-		BaseURL:    strings.TrimRight(envOr("MISTRAL_BASE_URL", "https://api.mistral.ai"), "/"),
-		ProxyKey:   os.Getenv("PROXY_API_KEY"),
-		ListenAddr: envOr("LISTEN_ADDR", ":8080"),
-		UserAgent:  envOr("UPSTREAM_USER_AGENT", "Mistral-Vibe/3.1.3"),
-		Debug:      os.Getenv("DEBUG") == "1",
+		APIKey:         os.Getenv("MISTRAL_API_KEY"),
+		BaseURL:        strings.TrimRight(envOr("MISTRAL_BASE_URL", "https://api.mistral.ai"), "/"),
+		ProxyKey:       os.Getenv("PROXY_API_KEY"),
+		ListenAddr:     envOr("LISTEN_ADDR", ":8080"),
+		AnthropicModel: envOr("ANTHROPIC_MODEL", "mistral-large-4-0"),
+		UserAgent:      envOr("UPSTREAM_USER_AGENT", "Mistral-Vibe/3.1.3"),
+		Debug:          os.Getenv("DEBUG") == "1",
 	}
 	if cfg.APIKey == "" {
 		return Config{}, errors.New("MISTRAL_API_KEY is required")
