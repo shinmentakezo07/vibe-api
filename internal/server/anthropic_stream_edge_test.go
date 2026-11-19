@@ -17,6 +17,19 @@ func edgeTestServer(t *testing.T) *Server {
 }
 
 // Upstream error frames mid-stream (quota, overload, key revocation) must be
+func dataFrames(t *testing.T, body string) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "data: ") {
+			out = append(out, strings.TrimPrefix(line, "data: "))
+		}
+	}
+	return out
+}
+
+// Upstream error frames mid-stream (quota, overload, key revocation) must be
 // surfaced as an Anthropic error event, not folded into a silent end_turn.
 func TestAnthropicStreamUpstreamError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -25,8 +38,6 @@ func TestAnthropicStreamUpstreamError(t *testing.T) {
 	upstream := strings.Join([]string{
 		`data: {"choices":[{"delta":{"content":"hi"}}]}`,
 		`data: {"error":{"message":"quota exceeded","type":"tokens_exceeded"}}`,
-		`data: [DONE]`,
-		``,
 	}, "\n\n")
 	streamAnthropic(c.Writer, strings.NewReader(upstream), translator.NewAnthropicStream("m", ""), edgeTestServer(t), func([]byte) {})
 	body := rec.Body.String()

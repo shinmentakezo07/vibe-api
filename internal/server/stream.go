@@ -33,6 +33,19 @@ func streamSSE(w gin.ResponseWriter, src io.Reader, log *slog.Logger, onData fun
 					return
 				}
 			}
+		} else if data == "[DONE]" {
+			// Buffered tool calls, if any, must reach the client before the
+			// terminal marker; clients stop reading at [DONE].
+			for _, chunk := range state.flush() {
+				if !writeSSEData(w, chunk) {
+					return
+				}
+			}
+			if _, werr := w.Write([]byte(line)); werr != nil {
+				return
+			}
+			w.Flush()
+			return
 		} else if line != "" {
 			if _, werr := w.Write([]byte(line)); werr != nil {
 				return
