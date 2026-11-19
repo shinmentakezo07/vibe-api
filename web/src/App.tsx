@@ -244,12 +244,15 @@ function App() {
 
           <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <h2 className="text-lg font-semibold tracking-tight">Usage</h2>
+              <h2 className="bg-gradient-to-r from-foreground to-foreground/60 bg-clip-text text-lg font-semibold tracking-tight text-transparent">
+                Usage
+              </h2>
               <p className="text-xs text-muted-foreground">
                 Token accounting, throughput, and latency across every proxied call.
               </p>
             </div>
-            <span className="text-[10px] tracking-wider text-muted-foreground uppercase">
+            <span className="inline-flex items-center gap-1.5 text-[10px] tracking-wider text-muted-foreground uppercase">
+              <span className="live-dot size-1.5 rounded-full bg-primary/70" />
               Refreshes every 3 seconds
             </span>
           </div>

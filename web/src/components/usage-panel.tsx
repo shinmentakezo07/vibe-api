@@ -1,6 +1,7 @@
 import { useMemo } from "react"
 import { Bar, BarChart, CartesianGrid, XAxis } from "recharts"
 import { Activity, Gauge, Timer, Waves } from "lucide-react"
+import { cn } from "cn"
 
 import { compactNumber, type UsageSnapshot } from "@/lib/api"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -43,13 +44,30 @@ function buildThroughput(snapshot?: UsageSnapshot): ThroughputBucket[] {
 }
 
 function PulseBar({ height, index }: { height: number; index: number }) {
+  const recent = index >= 50
   return (
-    <div className="flex h-full flex-1 items-end">
+    <div className="flex h-full flex-1 items-end" title={`${Math.round(height)}% of peak`}>
       <div
-        className="w-full rounded-sm bg-gradient-to-t from-primary/30 to-primary transition-all duration-500"
-        style={{ height: `${Math.max(4, height)}%`, opacity: 0.35 + (index / 60) * 0.65 }}
+        className={cn(
+          "w-full rounded-t-sm transition-all duration-500 ease-out",
+          height === 0 ? "bg-secondary" : "bg-gradient-to-t from-primary/25 via-primary/60 to-primary",
+        )}
+        style={{ height: `${Math.max(6, height)}%`, opacity: recent ? 1 : 0.35 + (index / 60) * 0.6 }}
       />
     </div>
+  )
+}
+
+function Sparkline({ values, color }: { values: number[]; color: string }) {
+  const peak = Math.max(1, ...values)
+  const points = values
+    .map((value, index) => `${(index / (values.length - 1)) * 100},${30 - (value / peak) * 28}`)
+    .join(" ")
+  return (
+    <svg viewBox="0 0 100 30" preserveAspectRatio="none" className="h-8 w-full">
+      <polyline points={`0,30 ${points} 100,30`} fill={color} opacity="0.1" stroke="none" />
+      <polyline points={points} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" className="opacity-90" />
+    </svg>
   )
 }
 
@@ -70,21 +88,17 @@ function WindowGauge({
 }) {
   const percent = Math.min(100, Math.max(0, (value / max) * 100))
   const circumference = 2 * Math.PI * 42
+  const active = percent > 1
   return (
-    <div className="flex flex-col items-center gap-2 text-center">
+    <div className="group/gauge flex flex-col items-center gap-2 text-center">
       <div className="relative size-24">
         <svg viewBox="0 0 100 100" className="size-full -rotate-90">
-          <circle cx="50" cy="50" r="42" fill="none" stroke="var(--border)" strokeWidth="7" />
+          <circle cx="50" cy="50" r="42" fill="none" stroke="var(--secondary)" strokeWidth="7" />
           <circle
-            cx="50"
-            cy="50"
-            r="42"
-            fill="none"
-            stroke={color}
-            strokeWidth="7"
-            strokeLinecap="round"
+            cx="50" cy="50" r="42" fill="none" stroke={color} strokeWidth="7" strokeLinecap="round"
             strokeDasharray={`${(percent / 100) * circumference} ${circumference}`}
-            className="transition-all duration-700"
+            className="transition-all duration-700 ease-out"
+            style={{ filter: active ? `drop-shadow(0 0 4px ${color})` : undefined }}
           />
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
@@ -190,11 +204,13 @@ export function UsagePanel({ snapshot, pending }: { snapshot?: UsageSnapshot; pe
               <Activity className="size-4 text-primary" />
               Live pulse
             </CardTitle>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Rolling 60-second window · {rates.requests} {rates.requests === 1 ? "request" : "requests"}
+            <p className="mt-1 font-mono text-xs text-muted-foreground">
+              Rolling 60-second window ·{" "}
+              <span className="text-foreground/80">{rates.requests}</span>{" "}
+              {rates.requests === 1 ? "request" : "requests"}
             </p>
           </div>
-          <span className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/40 px-2.5 py-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+          <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/25 bg-emerald-400/[0.08] px-2.5 py-1 text-[10px] font-medium tracking-wide text-emerald-300 uppercase">
             <span className="live-dot size-1.5 rounded-full bg-emerald-400" />
             Live
           </span>
@@ -235,18 +251,24 @@ export function UsagePanel({ snapshot, pending }: { snapshot?: UsageSnapshot; pe
             />
           </div>
 
+          <Sparkline values={pulse} color="var(--chart-1)" />
           <div>
             <div className="mb-2 flex items-center justify-between text-[10px] tracking-wider text-muted-foreground uppercase">
               <span className="inline-flex items-center gap-1.5">
                 <Waves className="size-3" />
                 60-second pulse
               </span>
-              <span>tokens / second</span>
+              <span>tokens / second · peak-scaled</span>
             </div>
-            <div className="flex h-14 items-end gap-[2px]">
+            <div className="flex h-16 items-end gap-[2px]">
               {pulse.map((height, index) => (
                 <PulseBar key={index} height={height} index={index} />
               ))}
+            </div>
+            <div className="mt-1.5 flex justify-between font-mono text-[9px] text-muted-foreground/60">
+              <span>-60s</span>
+              <span>-30s</span>
+              <span>now</span>
             </div>
           </div>
         </CardContent>
@@ -287,10 +309,16 @@ export function UsagePanel({ snapshot, pending }: { snapshot?: UsageSnapshot; pe
                   <ChartTooltip cursor={false} content={<ChartTooltipContent indicator="line" />} />
                   <Bar
                     dataKey="output"
-                    fill="var(--color-output)"
+                    fill="url(#throughputGradient)"
                     radius={[4, 4, 0, 0]}
                     maxBarSize={18}
                   />
+                  <defs>
+                    <linearGradient id="throughputGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--color-output)" stopOpacity={0.95} />
+                      <stop offset="100%" stopColor="var(--color-output)" stopOpacity={0.45} />
+                    </linearGradient>
+                  </defs>
                 </BarChart>
               </ChartContainer>
             )}
@@ -332,16 +360,19 @@ export function UsagePanel({ snapshot, pending }: { snapshot?: UsageSnapshot; pe
               </div>
             ) : (
               <div className="space-y-3">
-                {latencyBuckets.map((bucket) => (
+                {latencyBuckets.map((bucket, index) => (
                   <div key={bucket.label} className="space-y-1">
                     <div className="flex items-baseline justify-between gap-2 text-[10px]">
                       <span className="font-mono text-muted-foreground">{bucket.label}</span>
-                      <span className="text-foreground/75">{bucket.count}</span>
+                      <span className="font-mono tabular-nums text-foreground/75">{bucket.count}</span>
                     </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-secondary/70">
+                    <div className="relative h-2.5 overflow-hidden rounded-full bg-secondary/60">
                       <div
-                        className="h-full rounded-full bg-gradient-to-r from-sky-500/70 to-emerald-400 transition-all duration-500"
-                        style={{ width: `${bucket.percent}%` }}
+                        className="h-full rounded-full transition-all duration-500 ease-out"
+                        style={{
+                          width: `${bucket.percent}%`,
+                          background: `linear-gradient(90deg, oklch(0.62 0.16 235 / 0.75), oklch(0.78 0.16 155 / ${0.55 + (index / latencyBuckets.length) * 0.45}))`,
+                        }}
                       />
                     </div>
                   </div>
