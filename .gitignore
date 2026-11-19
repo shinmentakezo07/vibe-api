@@ -1,0 +1,6 @@
+# Build artifacts
+/vibe-api
+*.exe
+
+# Environment
+.env
